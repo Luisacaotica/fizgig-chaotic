@@ -724,9 +724,9 @@ def _inject_chaotic_start_ui(self):
             card.pack(fill=tk.X, padx=36, pady=(0,16))
             tk.Label(card, text="Optional — Control & Regularization", font=(FONT_FAMILY, 12, "bold"), fg=COLORS.get("text_primary","#FFF2E6"), bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=12, pady=8)
         card.grid_columnconfigure(1, weight=1)
-        # Move card to be directly after Training image folder (above Post-Training Tools) - use training_card from entry (most reliable)
+        # Move card to be directly after Training image folder and hide Post-Training Tools shortcut (user request to give space)
         try:
-            # training_card already set via image_folder_var entry in outer finding above; if not, fallback to label search
+            # training_card already from outer finding via entry; if not, search
             if 'training_card' not in locals() or training_card is None:
                 def _contains_text(widget, text):
                     for c in widget.winfo_children():
@@ -741,30 +741,38 @@ def _inject_chaotic_start_ui(self):
                     if _contains_text(ch, "Training image folder"):
                         training_card = ch
                         break
+            # Find Post-Training Tools card to hide it
+            def _contains_text2(widget, text):
+                for c in widget.winfo_children():
+                    try:
+                        if isinstance(c, tk.Label) and text in str(c.cget("text")):
+                            return True
+                    except: pass
+                    if _contains_text2(c, text):
+                        return True
+                return False
+            post_card = None
+            for ch in outer.winfo_children():
+                if _contains_text2(ch, "Post-Training Tools"):
+                    post_card = ch
+                    break
             if training_card is not None and training_card != card:
                 card.pack_forget()
                 card.pack(fill=tk.X, padx=36, pady=(0,16), after=training_card)
-                print(f"[chaotic] Start card reordered after Training image folder (above Post-Training) - entry anchor")
-            else:
-                # Fallback: find Post-Training Tools
-                def _contains_text2(widget, text):
-                    for c in widget.winfo_children():
-                        try:
-                            if isinstance(c, tk.Label) and text in str(c.cget("text")):
-                                return True
-                        except: pass
-                        if _contains_text2(c, text):
-                            return True
-                    return False
-                post_card = None
-                for ch in outer.winfo_children():
-                    if _contains_text2(ch, "Post-Training Tools"):
-                        post_card = ch
-                        break
-                if post_card is not None and post_card != card:
-                    card.pack_forget()
-                    card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
-                    print(f"[chaotic] Start card reordered before Post-Training Tools (fallback)")
+                print(f"[chaotic] Start card reordered after Training image folder")
+                if post_card is not None:
+                    try:
+                        post_card.pack_forget()
+                        print(f"[chaotic] Post-Training Tools hidden to give space for Optional")
+                    except: pass
+            elif post_card is not None and post_card != card:
+                card.pack_forget()
+                card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
+                print(f"[chaotic] Start card reordered before Post-Training Tools (fallback)")
+                try:
+                    post_card.pack_forget()
+                    print(f"[chaotic] Post-Training Tools hidden (fallback)")
+                except: pass
         except Exception as e:
             print(f"[chaotic] start reorder failed: {e}")
             import traceback; traceback.print_exc()
