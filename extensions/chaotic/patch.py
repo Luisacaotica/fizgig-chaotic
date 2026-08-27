@@ -150,6 +150,10 @@ def apply_chaotic_patches(GUIClass):
             import traceback; traceback.print_exc()
         # Chaotic defaults & extras
         try:
+            _inject_chaotic_start_ui(self)
+        except Exception as e:
+            print(f"[chaotic] start control/reg patch failed: {e}")
+        try:
             _patch_sample_default(self)
         except Exception as e:
             print(f"[chaotic] sample default patch failed: {e}")
@@ -161,6 +165,14 @@ def apply_chaotic_patches(GUIClass):
             _patch_optimizer_tooltips(self)
         except Exception as e:
             print(f"[chaotic] tooltip patch failed: {e}")
+        try:
+            _patch_image_prep(self)
+        except Exception as e:
+            print(f"[chaotic] image prep patch failed: {e}")
+        try:
+            _patch_slider_validation(self)
+        except Exception as e:
+            print(f"[chaotic] slider validation patch failed: {e}")
     GUIClass.__init__ = chaotic_init
 
     # Patch start_training for steps->epochs and control_directory
@@ -430,53 +442,19 @@ def _inject_chaotic_ui(self):
     ttk.Separator(content, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
     row+=1
 
-    # --- Control + Target ---
-    tk.Label(content, text="Control + Target (paired training — depth/pose/canny/edit)", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,2))
-    row+=1
-    tk.Label(content, text="Target = Dataset folder (Start tab). Control = condicionamento. Mesmo nome de arquivo nas duas pastas = par.", font=("Segoe UI", 9), fg=COLORS["text_explain"], bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0,4))
-    row+=1
-    ctrl_frame = ttk.Frame(content)
-    ctrl_frame.grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
-    ttk.Label(ctrl_frame, text="Control folder:").pack(side=tk.LEFT, padx=(0,4))
-    self._chaotic_control_dir_var = tk.StringVar(value=getattr(self, '_chaotic_control_dir', "") or "")
-    ctrl_ent = ttk.Entry(ctrl_frame, textvariable=self._chaotic_control_dir_var, width=46)
-    ctrl_ent.pack(side=tk.LEFT)
-    self.entries['CHAOTIC_CONTROL_DIR'] = ctrl_ent
-    def _browse_ctrl():
-        d = filedialog.askdirectory(title="Select CONTROL folder (paired to Dataset)")
-        if d:
-            self._chaotic_control_dir_var.set(d)
-            self._chaotic_control_dir = d
-            _update_pairing_label()
-    ttk.Button(ctrl_frame, text="Browse", command=_browse_ctrl).pack(side=tk.LEFT, padx=(4,0))
-    ttk.Button(ctrl_frame, text="Clear", command=lambda: (self._chaotic_control_dir_var.set(""), setattr(self,'_chaotic_control_dir',None), _update_pairing_label())).pack(side=tk.LEFT, padx=(4,0))
-    row+=1
-    pairing_label = tk.Label(content, text="", font=("Segoe UI", 9, "italic"), fg="#8A9BAE", bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT)
-    pairing_label.grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
-    self._chaotic_pairing_label = pairing_label
-    def _update_pairing_label(*_):
-        try:
-            target = self.image_folder_var.get() if hasattr(self,'image_folder_var') else ''
-            ctrl = self._chaotic_control_dir_var.get().strip()
-            self._chaotic_control_dir = ctrl if ctrl else None
-            if not ctrl:
-                pairing_label.config(text="No control folder → unpaired (default).", fg="#8A9BAE"); return
-            if not os.path.isdir(ctrl):
-                pairing_label.config(text="Control folder doesn't exist.", fg="#EF4444"); return
-            if not target or not os.path.isdir(target):
-                pairing_label.config(text=f"Control: {ctrl}  — set Dataset folder to check pairing.", fg="#8A9BAE"); return
-            t_files = set(os.path.splitext(f)[0] for f in os.listdir(target) if os.path.splitext(f)[1].lower() in ['.jpg','.jpeg','.png','.webp'])
-            c_files = set(os.path.splitext(f)[0] for f in os.listdir(ctrl) if os.path.splitext(f)[1].lower() in ['.jpg','.jpeg','.png','.webp'])
-            matched = len(t_files & c_files); total=len(t_files)
-            if matched==0: pairing_label.config(text=f"⚠ 0/{total} paired — need same basename!", fg="#F59E0B")
-            elif matched<total: pairing_label.config(text=f"⚠ {matched}/{total} paired — {total-matched} missing control will ERROR", fg="#F59E0B")
-            else: pairing_label.config(text=f"✓ {matched}/{total} paired — control conditioning active (Klein Edit / Krea2 / H3)", fg="#10B981")
-        except Exception as e: pairing_label.config(text=f"Pairing check failed: {e}", fg="#F59E0B")
-    try:
-        self.image_folder_var.trace_add("write", lambda *_: _update_pairing_label())
-        self._chaotic_control_dir_var.trace_add("write", lambda *_: _update_pairing_label())
-    except: pass
-    _update_pairing_label()
+    # Control moved to Start tab (together with Regularization, both optional)
+    tk.Label(content, text="Control + Regularization moved → Start tab (below Dataset folder, optional)", font=("Segoe UI", 9, "italic"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
+    # Keep vars for backwards compat but init them if not yet created (Start tab will own them)
+    if not hasattr(self, '_chaotic_control_dir_var'):
+        self._chaotic_control_dir_var = tk.StringVar(value=getattr(self, '_chaotic_control_dir', "") or "")
+        self.entries['CHAOTIC_CONTROL_DIR'] = tk.Entry(content, textvariable=self._chaotic_control_dir_var)  # hidden, for sync
+        self.entries['CHAOTIC_CONTROL_DIR'].grid_remove()
+    if not hasattr(self, '_chaotic_enable_control'):
+        self._chaotic_enable_control = tk.BooleanVar(value=bool(self._chaotic_control_dir_var.get()))
+    # Pairing label kept for status (now in Start tab, but keep hidden label for logic)
+    if not hasattr(self, '_chaotic_pairing_label'):
+        self._chaotic_pairing_label = tk.Label(content, text="", bg=COLORS["bg_surface"])
+        self._chaotic_pairing_label.grid_remove()
     row+=1
     ttk.Separator(content, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
     row+=1
@@ -697,6 +675,154 @@ def _inject_chaotic_samples_ui(self):
         print(f"[chaotic] samples card failed: {e}")
         import traceback; traceback.print_exc()
 
+def _inject_chaotic_start_ui(self):
+    # Start tab: Optional Control + Regularization (both optional, together)
+    try:
+        import lora_trainer_gui as gui_mod
+        COLORS = gui_mod.COLORS
+        FONT_FAMILY = gui_mod.FONT_FAMILY
+    except:
+        COLORS = {"bg_surface":"#1A1A1A", "text_explain":"#FFD9B3", "text_muted":"#8A6B4A", "bg_deep":"#0A0A0A"}
+        FONT_FAMILY = "Segoe UI"
+    # Locate Start tab outer via image_folder_var entry
+    outer = None
+    try:
+        if "CHAOTIC_CONTROL_DIR" in self.entries:
+            # already created hidden entry, find its master chain for outer? fallback to image_folder entry
+            ent = self.entries.get("MAX_TRAIN_EPOCHS")
+            if ent is not None:
+                outer = ent.master.master.master if ent.master else None
+        # Better: via image_folder_var
+        if hasattr(self, 'image_folder_var'):
+            # Find widget that displays image_folder_var - the Entry
+            for w in self.master.winfo_children():
+                # search recursively for Entry with textvariable == image_folder_var
+                def _find_entry(widget):
+                    for child in widget.winfo_children():
+                        try:
+                            if isinstance(child, (tk.Entry, ttk.Entry)) and child.cget("textvariable") == str(self.image_folder_var):
+                                return child
+                        except: pass
+                        res = _find_entry(child)
+                        if res: return res
+                    return None
+                ent = _find_entry(w)
+                if ent is not None:
+                    # ent -> row -> card -> outer
+                    try:
+                        outer = ent.master.master.master
+                        break
+                    except: pass
+        # Fallback: use any collapsible_sections outer
+        if outer is None and hasattr(self, 'collapsible_sections'):
+            sec = self.collapsible_sections.get("training")
+            if sec: outer = sec.master
+    except: pass
+    if outer is None:
+        # Last fallback: use master
+        outer = self.master
+        print("[chaotic] start outer fallback to master")
+    print(f"[chaotic] start outer found: {outer}")
+    try:
+        # Use _start_section_card if available
+        card = None
+        if hasattr(self, '_start_section_card'):
+            card = self._start_section_card(outer, "Optional — Control & Regularization", "Control (paired edit) and Regularization images are optional. When enabled, they are included in Image Prep and training. Control needs same basenames as target; Regularization is extra images to prevent overfitting (video+image).")
+        else:
+            card = tk.Frame(outer, bg=COLORS["bg_surface"], highlightbackground=COLORS.get("border","#3A2410"), highlightthickness=1)
+            card.pack(fill=tk.X, padx=36, pady=(0,16))
+            tk.Label(card, text="Optional — Control & Regularization", font=(FONT_FAMILY, 12, "bold"), fg=COLORS.get("text_primary","#FFF2E6"), bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=12, pady=8)
+        card.grid_columnconfigure(1, weight=1)
+        # Enable Control
+        if not hasattr(self, '_chaotic_enable_control'):
+            self._chaotic_enable_control = tk.BooleanVar(value=bool(getattr(self, '_chaotic_control_dir_var', tk.StringVar()).get() if hasattr(self, '_chaotic_control_dir_var') else False))
+        if not hasattr(self, '_chaotic_control_dir_var'):
+            self._chaotic_control_dir_var = tk.StringVar(value="")
+        # If hidden entry exists, reuse its var
+        # Control row
+        r0 = tk.Frame(card, bg=COLORS["bg_surface"])
+        r0.pack(fill=tk.X, padx=5, pady=4)
+        ttk.Checkbutton(r0, text="Enable Control (paired edit) — depth/pose/canny/edit", variable=self._chaotic_enable_control).pack(side=tk.LEFT)
+        tk.Label(r0, text="Control folder:", font=(FONT_FAMILY, 9), fg=COLORS.get("text_muted","#8A6B4A"), bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(12,4))
+        # Ensure entry exists
+        if 'CHAOTIC_CONTROL_DIR' not in self.entries or not isinstance(self.entries['CHAOTIC_CONTROL_DIR'], tk.Widget):
+            ent = ttk.Entry(r0, textvariable=self._chaotic_control_dir_var, width=32)
+            ent.pack(side=tk.LEFT)
+            self.entries['CHAOTIC_CONTROL_DIR'] = ent
+        else:
+            # Reparent: create visible entry in this row
+            ent = ttk.Entry(r0, textvariable=self._chaotic_control_dir_var, width=32)
+            ent.pack(side=tk.LEFT)
+            self.entries['CHAOTIC_CONTROL_DIR_VISIBLE'] = ent
+        def _browse_ctrl2():
+            d = filedialog.askdirectory(title="Select CONTROL folder (paired to Dataset)")
+            if d:
+                self._chaotic_control_dir_var.set(d)
+                self._chaotic_enable_control.set(True)
+                self._chaotic_control_dir = d
+        ttk.Button(r0, text="Browse", command=_browse_ctrl2).pack(side=tk.LEFT, padx=(4,0))
+        ttk.Button(r0, text="Clear", command=lambda: (self._chaotic_control_dir_var.set(""), self._chaotic_enable_control.set(False))).pack(side=tk.LEFT, padx=(2,0))
+        # Pairing status
+        pairing2 = tk.Label(card, text="", font=(FONT_FAMILY, 8, "italic"), fg="#8A9BAE", bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT)
+        pairing2.pack(anchor=tk.W, padx=5, pady=2)
+        self._chaotic_pairing_label2 = pairing2
+        # Regularization
+        if not hasattr(self, '_chaotic_enable_reg'):
+            self._chaotic_enable_reg = tk.BooleanVar(value=False)
+        if not hasattr(self, '_chaotic_reg_dir_var'):
+            self._chaotic_reg_dir_var = tk.StringVar(value="")
+        r1 = tk.Frame(card, bg=COLORS["bg_surface"])
+        r1.pack(fill=tk.X, padx=5, pady=4)
+        ttk.Checkbutton(r1, text="Enable Regularization — extra images to preserve prior (video+image)", variable=self._chaotic_enable_reg).pack(side=tk.LEFT)
+        tk.Label(r1, text="Reg folder:", font=(FONT_FAMILY, 9), fg=COLORS.get("text_muted","#8A6B4A"), bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(12,4))
+        reg_ent = ttk.Entry(r1, textvariable=self._chaotic_reg_dir_var, width=32)
+        reg_ent.pack(side=tk.LEFT)
+        self.entries['CHAOTIC_REG_DIR'] = reg_ent
+        def _browse_reg():
+            d = filedialog.askdirectory(title="Select REGULARIZATION folder")
+            if d:
+                self._chaotic_reg_dir_var.set(d)
+                self._chaotic_enable_reg.set(True)
+        ttk.Button(r1, text="Browse", command=_browse_reg).pack(side=tk.LEFT, padx=(4,0))
+        ttk.Button(r1, text="Clear", command=lambda: (self._chaotic_reg_dir_var.set(""), self._chaotic_enable_reg.set(False))).pack(side=tk.LEFT, padx=(2,0))
+        # Slider toggle (no data)
+        if not hasattr(self, '_chaotic_slider_mode'):
+            self._chaotic_slider_mode = tk.BooleanVar(value=False)
+        r2 = tk.Frame(card, bg=COLORS["bg_surface"])
+        r2.pack(fill=tk.X, padx=5, pady=4)
+        ttk.Checkbutton(r2, text="Slider LoRA (no data needed) — train concept slider via prompts (pos/neg) without images", variable=self._chaotic_slider_mode).pack(side=tk.LEFT)
+        self.entries['CHAOTIC_SLIDER_MODE'] = self._chaotic_slider_mode
+        tk.Label(card, text="When Slider is ON, image folder can be empty; training uses prompt anchors/targets. Regularization still recommended.", font=(FONT_FAMILY, 8, "italic"), fg=COLORS.get("text_explain","#FFD9B3"), bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=2)
+        # Update pairing for new location
+        def _update_start_pairing(*_a):
+            try:
+                target = self.image_folder_var.get() if hasattr(self, 'image_folder_var') else ''
+                ctrl = self._chaotic_control_dir_var.get().strip() if hasattr(self, '_chaotic_control_dir_var') else ''
+                enabled = self._chaotic_enable_control.get() if hasattr(self, '_chaotic_enable_control') else bool(ctrl)
+                if not enabled or not ctrl:
+                    pairing2.config(text="Control disabled → unpaired (default).", fg="#8A9BAE"); return
+                if not os.path.isdir(ctrl):
+                    pairing2.config(text="Control folder doesn't exist.", fg="#EF4444"); return
+                if not target or not os.path.isdir(target):
+                    pairing2.config(text=f"Control: {ctrl} — set Dataset folder to check pairing.", fg="#8A9BAE"); return
+                t_files = set(os.path.splitext(f)[0] for f in os.listdir(target) if os.path.splitext(f)[1].lower() in ['.jpg','.jpeg','.png','.webp'])
+                c_files = set(os.path.splitext(f)[0] for f in os.listdir(ctrl) if os.path.splitext(f)[1].lower() in ['.jpg','.jpeg','.png','.webp'])
+                matched = len(t_files & c_files); total=len(t_files)
+                if matched==0: pairing2.config(text=f"⚠ 0/{total} paired — need same basename!", fg="#F59E0B")
+                elif matched<total: pairing2.config(text=f"⚠ {matched}/{total} paired — {total-matched} missing will ERROR", fg="#F59E0B")
+                else: pairing2.config(text=f"✓ {matched}/{total} paired — control active (Klein/Edit)", fg="#10B981")
+            except Exception as e: pairing2.config(text=f"Pairing check failed: {e}", fg="#F59E0B")
+        try:
+            self.image_folder_var.trace_add("write", lambda *_: _update_start_pairing())
+            self._chaotic_control_dir_var.trace_add("write", lambda *_: _update_start_pairing())
+            self._chaotic_enable_control.trace_add("write", lambda *_: _update_start_pairing())
+        except: pass
+        _update_start_pairing()
+        print("[chaotic] Start tab Control & Regularization card injected")
+    except Exception as e:
+        print(f"[chaotic] start card failed: {e}")
+        import traceback; traceback.print_exc()
+
 def _on_steps_toggle(self):
     on = bool(self._chaotic_steps_mode.get())
     try:
@@ -726,6 +852,105 @@ def _on_steps_toggle(self):
         with open(pref_path, 'w', encoding='utf-8') as f:
             _json.dump({"steps_mode": on}, f)
     except: pass
+
+def _patch_image_prep(self):
+    # Patch Image Prep to also process Control and Regularization folders when enabled
+    try:
+        orig_convert = getattr(self, 'convert_images', None)
+        orig_auto = getattr(self, '_auto_prep_images', None)
+        orig_resize = getattr(self, '_resize_only_images', None)
+        orig_crop = getattr(self, '_face_crop_only_images', None)
+        if not orig_convert:
+            return
+        # Wrap convert_images to also handle control/reg after main
+        def _patched_convert():
+            # Call original for main dataset
+            result = orig_convert()
+            # Then process control/reg if enabled
+            try:
+                import os as _os
+                # Control
+                if hasattr(self, '_chaotic_enable_control') and self._chaotic_enable_control.get():
+                    ctrl = self._chaotic_control_dir_var.get().strip() if hasattr(self, '_chaotic_control_dir_var') else ""
+                    if ctrl and _os.path.isdir(ctrl):
+                        # Use same prep settings but output to same output folder? For paired training, control images should be processed similarly
+                        # We reuse the same logic but with control as source
+                        print(f"[chaotic][prep] also processing Control folder: {ctrl}")
+                        # We can call the internal prep with same params but swapped source
+                        # For now, just resize them similarly via simple resize (reuse target_area)
+                        try:
+                            # Access current prep settings
+                            src = ctrl
+                            out = self.convert_output_var.get() or src
+                            # Use same target_area as main: from prep_megapixels_var
+                            try:
+                                ta = self._prep_target_area(float(self.prep_megapixels_var.get()))
+                            except: ta = self._prep_target_area(1.0)
+                            replace = self.delete_originals_var.get()
+                            mode = self.prep_mode_var.get()
+                            # Call appropriate internal method with control source
+                            if mode == "Auto Prep (Face Crops)":
+                                self._auto_prep_images(src, out, ta, self._get_face_selection_mode(), float(self.face_padding_var.get() or 20), replace)
+                            elif mode == "Resize Only":
+                                self._resize_only_images(src, out, ta, replace)
+                            elif mode == "Face Crop Only":
+                                self._face_crop_only_images(src, out, ta, self._get_face_selection_mode(), float(self.face_padding_var.get() or 20), replace)
+                        except Exception as e:
+                            print(f"[chaotic][prep] control prep failed: {e}")
+                if hasattr(self, '_chaotic_enable_reg') and self._chaotic_enable_reg.get():
+                    reg = self._chaotic_reg_dir_var.get().strip() if hasattr(self, '_chaotic_reg_dir_var') else ""
+                    if reg and _os.path.isdir(reg):
+                        print(f"[chaotic][prep] also processing Regularization folder: {reg}")
+                        try:
+                            src = reg
+                            out = self.convert_output_var.get() or src
+                            try: ta = self._prep_target_area(float(self.prep_megapixels_var.get()))
+                            except: ta = self._prep_target_area(1.0)
+                            replace = self.delete_originals_var.get()
+                            mode = self.prep_mode_var.get()
+                            if mode == "Auto Prep (Face Crops)":
+                                self._auto_prep_images(src, out, ta, self._get_face_selection_mode(), float(self.face_padding_var.get() or 20), replace)
+                            elif mode == "Resize Only":
+                                self._resize_only_images(src, out, ta, replace)
+                            elif mode == "Face Crop Only":
+                                self._face_crop_only_images(src, out, ta, self._get_face_selection_mode(), float(self.face_padding_var.get() or 20), replace)
+                        except Exception as e:
+                            print(f"[chaotic][prep] reg prep failed: {e}")
+            except Exception as e:
+                print(f"[chaotic][prep] wrapper failed: {e}")
+            return result
+        self.convert_images = _patched_convert
+        print("[chaotic] Image Prep patched to include Control & Regularization")
+    except Exception as e:
+        print(f"[chaotic] image prep patch failed: {e}")
+
+def _patch_slider_validation(self):
+    # Allow Slider LoRA training without images (no data needed)
+    try:
+        # Patch start_training validation that checks image folder exists
+        orig_start = getattr(self, 'start_training', None)
+        # Our patched_start already wraps, but we need to allow empty folder when slider on
+        # Instead patch the validation method that checks folder before training
+        # Find method that validates: often _validate_inputs or similar
+        for meth_name in ['_validate_inputs', 'validate_inputs', '_check_dataset', '_validate_dataset']:
+            if hasattr(self, meth_name):
+                orig = getattr(self, meth_name)
+                def _make(m):
+                    def _patched(*a, **kw):
+                        # If slider mode on, skip empty folder check
+                        try:
+                            if hasattr(self, '_chaotic_slider_mode') and self._chaotic_slider_mode.get():
+                                print("[chaotic][slider] validation bypass - no data needed for slider")
+                                return True
+                        except: pass
+                        return m(*a, **kw)
+                    return _patched
+                setattr(self, meth_name, _make(orig))
+        # Also patch the direct folder check in start_training wrapper (already patched)
+        # Ensure slider var is accessible
+        print("[chaotic] slider validation patched (no data needed when Slider ON)")
+    except Exception as e:
+        print(f"[chaotic] slider patch failed: {e}")
 
 def _patch_sample_default(self):
     # Chaotic default: Enable Sample Generation unchecked by default (user request)
