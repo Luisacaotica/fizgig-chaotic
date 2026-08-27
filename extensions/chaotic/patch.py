@@ -724,10 +724,22 @@ def _inject_chaotic_start_ui(self):
             card.pack(fill=tk.X, padx=36, pady=(0,16))
             tk.Label(card, text="Optional — Control & Regularization", font=(FONT_FAMILY, 12, "bold"), fg=COLORS.get("text_primary","#FFF2E6"), bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=12, pady=8)
         card.grid_columnconfigure(1, weight=1)
-        # Move card to be directly after Training image folder and hide Post-Training Tools shortcut (user request to give space)
+        # Move card to be directly after Training image folder (above Post-Training Tools) - ensure direct child for pack
         try:
-            # training_card already from outer finding via entry; if not, search
-            if 'training_card' not in locals() or training_card is None:
+            def _to_direct(widget, outer):
+                cur = widget
+                try:
+                    while cur is not None and cur.master != outer and cur.master is not None:
+                        cur = cur.master
+                    if cur is not None and cur.master == outer:
+                        return cur
+                except: pass
+                return widget
+            # training_card already from entry; ensure direct child
+            tc_direct = None
+            if 'training_card' in locals() and training_card is not None:
+                tc_direct = _to_direct(training_card, outer)
+            else:
                 def _contains_text(widget, text):
                     for c in widget.winfo_children():
                         try:
@@ -739,40 +751,54 @@ def _inject_chaotic_start_ui(self):
                     return False
                 for ch in outer.winfo_children():
                     if _contains_text(ch, "Training image folder"):
-                        training_card = ch
+                        tc_direct = ch
                         break
-            # Find Post-Training Tools card to hide it
-            def _contains_text2(widget, text):
-                for c in widget.winfo_children():
-                    try:
-                        if isinstance(c, tk.Label) and text in str(c.cget("text")):
+            card_direct = _to_direct(card, outer)
+            if tc_direct is not None and tc_direct != card_direct:
+                card_direct.pack_forget()
+                card_direct.pack(fill=tk.X, padx=36, pady=(0,16), after=tc_direct)
+                print(f"[chaotic] Start card reordered after Training image folder (direct child)")
+                # Hide Post-Training Tools
+                def _contains_text2(widget, text):
+                    for c in widget.winfo_children():
+                        try:
+                            if isinstance(c, tk.Label) and text in str(c.cget("text")):
+                                return True
+                        except: pass
+                        if _contains_text2(c, text):
                             return True
-                    except: pass
-                    if _contains_text2(c, text):
-                        return True
-                return False
-            post_card = None
-            for ch in outer.winfo_children():
-                if _contains_text2(ch, "Post-Training Tools"):
-                    post_card = ch
-                    break
-            if training_card is not None and training_card != card:
-                card.pack_forget()
-                card.pack(fill=tk.X, padx=36, pady=(0,16), after=training_card)
-                print(f"[chaotic] Start card reordered after Training image folder")
-                if post_card is not None:
+                    return False
+                post_direct = None
+                for ch in outer.winfo_children():
+                    if _contains_text2(ch, "Post-Training Tools"):
+                        post_direct = ch
+                        break
+                if post_direct is not None:
                     try:
-                        post_card.pack_forget()
-                        print(f"[chaotic] Post-Training Tools hidden to give space for Optional")
+                        post_direct.pack_forget()
+                        print(f"[chaotic] Post-Training Tools hidden")
                     except: pass
-            elif post_card is not None and post_card != card:
-                card.pack_forget()
-                card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
-                print(f"[chaotic] Start card reordered before Post-Training Tools (fallback)")
-                try:
-                    post_card.pack_forget()
-                    print(f"[chaotic] Post-Training Tools hidden (fallback)")
-                except: pass
+            else:
+                def _contains_text2(widget, text):
+                    for c in widget.winfo_children():
+                        try:
+                            if isinstance(c, tk.Label) and text in str(c.cget("text")):
+                                return True
+                        except: pass
+                        if _contains_text2(c, text):
+                            return True
+                    return False
+                post_direct = None
+                for ch in outer.winfo_children():
+                    if _contains_text2(ch, "Post-Training Tools"):
+                        post_direct = ch
+                        break
+                if post_direct is not None and post_direct != card_direct:
+                    card_direct.pack_forget()
+                    card_direct.pack(fill=tk.X, padx=36, pady=(0,16), before=post_direct)
+                    print(f"[chaotic] Start card reordered before Post-Training Tools (fallback direct)")
+                    try: post_direct.pack_forget()
+                    except: pass
         except Exception as e:
             print(f"[chaotic] start reorder failed: {e}")
             import traceback; traceback.print_exc()

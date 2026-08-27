@@ -51,6 +51,7 @@ try:
 except: pass
 
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "src"))
 # MUST patch before Tk mainloop - import gui, patch class, then instantiate ourselves (NOT runpy)
 try:
     spec = importlib.util.spec_from_file_location("chaotic_patch", os.path.join(HERE, "extensions", "chaotic", "patch.py"))
