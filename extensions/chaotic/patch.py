@@ -148,6 +148,19 @@ def apply_chaotic_patches(GUIClass):
         except Exception as e:
             print(f"[chaotic] UI injection failed: {e}")
             import traceback; traceback.print_exc()
+        # Chaotic defaults & extras
+        try:
+            _patch_sample_default(self)
+        except Exception as e:
+            print(f"[chaotic] sample default patch failed: {e}")
+        try:
+            _inject_chaotic_gizmo_auto(self)
+        except Exception as e:
+            print(f"[chaotic] gizmo auto patch failed: {e}")
+        try:
+            _patch_optimizer_tooltips(self)
+        except Exception as e:
+            print(f"[chaotic] tooltip patch failed: {e}")
     GUIClass.__init__ = chaotic_init
 
     # Patch start_training for steps->epochs and control_directory
@@ -713,4 +726,255 @@ def _on_steps_toggle(self):
         with open(pref_path, 'w', encoding='utf-8') as f:
             _json.dump({"steps_mode": on}, f)
     except: pass
+
+def _patch_sample_default(self):
+    # Chaotic default: Enable Sample Generation unchecked by default (user request)
+    try:
+        if hasattr(self, 'sample_enabled_var'):
+            # Only change if default is checked and user hasn't manually set pref
+            # Check chaotic pref for sample default
+            import json as _json, os as _os
+            pref_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..", "presets", "chaotic.json")
+            pref_path = _os.path.abspath(pref_path)
+            # If chaotic.json exists and has sample_enabled key, respect it; else set False
+            should_uncheck = True
+            if _os.path.isfile(pref_path):
+                try:
+                    with open(pref_path, encoding='utf-8') as f:
+                        pj = _json.load(f)
+                        if "sample_enabled" in pj:
+                            should_uncheck = False  # user chose before
+                except: pass
+            if should_uncheck:
+                self.sample_enabled_var.set(False)
+                # also persist the choice
+                try:
+                    # update chaotic.json with sample_enabled
+                    pj = {}
+                    if _os.path.isfile(pref_path):
+                        try:
+                            with open(pref_path, encoding='utf-8') as f:
+                                pj = _json.load(f)
+                        except: pj = {}
+                    pj["sample_enabled"] = False
+                    with open(pref_path, 'w', encoding='utf-8') as f:
+                        _json.dump(pj, f)
+                except: pass
+                print("[chaotic] sample generation default unchecked")
+            # Also hook to persist future toggles
+            try:
+                self.sample_enabled_var.trace_add("write", lambda *_: _persist_sample_enabled(self))
+            except: pass
+    except Exception as e:
+        print(f"[chaotic] sample default patch inner failed: {e}")
+
+def _persist_sample_enabled(self):
+    try:
+        import json as _json, os as _os
+        pref_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..", "presets", "chaotic.json")
+        pref_path = _os.path.abspath(pref_path)
+        pj = {}
+        if _os.path.isfile(pref_path):
+            try:
+                with open(pref_path, encoding='utf-8') as f:
+                    pj = _json.load(f)
+            except: pj = {}
+        pj["sample_enabled"] = bool(self.sample_enabled_var.get())
+        _os.makedirs(_os.path.dirname(pref_path), exist_ok=True)
+        with open(pref_path, 'w', encoding='utf-8') as f:
+            _json.dump(pj, f)
+    except: pass
+
+def _inject_chaotic_gizmo_auto(self):
+    # Find the "Open Gizmo" button and add "Auto" next to it
+    try:
+        import tkinter as _tk
+        # Find gizmo row by searching for button with text "Open Gizmo"
+        def _find_gizmo_row(widget):
+            for child in widget.winfo_children():
+                # check if this is button with Open Gizmo
+                try:
+                    if isinstance(child, _tk.Button) and "Open Gizmo" in str(child.cget("text")):
+                        return child.master
+                except: pass
+                # recurse
+                try:
+                    res = _find_gizmo_row(child)
+                    if res is not None:
+                        return res
+                except: pass
+            return None
+        gizmo_row = _find_gizmo_row(self.master)
+        if gizmo_row is None:
+            # fallback: try self
+            gizmo_row = _find_gizmo_row(self)
+        if gizmo_row is None:
+            print("[chaotic] gizmo row not found for Auto button")
+            return
+        # Check if already added
+        for c in gizmo_row.winfo_children():
+            try:
+                if "Auto" in str(c.cget("text")) and "Gizmo" in str(c.cget("text")):
+                    print("[chaotic] Auto Gizmo button already exists")
+                    return
+            except: pass
+        # Add Auto button
+        try:
+            import lora_trainer_gui as gui_mod
+            COLORS = gui_mod.COLORS
+            FONT_FAMILY = gui_mod.FONT_FAMILY
+        except:
+            COLORS = {"accent":"#FF6B00", "bg_surface":"#1A1A1A", "text_primary":"#FFF2E6"}
+            FONT_FAMILY = "Segoe UI"
+        # Patch method onto instance if not exists
+        if not hasattr(self, '_chaotic_auto_video'):
+            def _auto_video():
+                _chaotic_auto_video_impl(self)
+            self._chaotic_auto_video = _auto_video
+        _tk.Button(gizmo_row, text="⚡ Auto", command=self._chaotic_auto_video,
+                  bg="#FF6B00", fg="#FFFFFF",
+                  activebackground="#FF8533", activeforeground="#FFFFFF",
+                  font=(FONT_FAMILY, 9, "bold"), relief=_tk.FLAT, bd=0, padx=12, pady=6, cursor="hand2").pack(side=_tk.LEFT, padx=(8,0))
+        _tk.Label(gizmo_row, text="auto-trim whole video to H3 spec (24fps, 17n+5 frames, 32k stereo)", font=(FONT_FAMILY, 8), fg="#8A9BAE" if "8A9BAE" in str(COLORS) else "#6B7280", bg=COLORS.get("bg_surface","#1A1A1A")).pack(side=_tk.LEFT, padx=8)
+        print("[chaotic] Auto Gizmo button injected below Open Gizmo")
+    except Exception as e:
+        print(f"[chaotic] gizmo auto inject failed: {e}")
+        import traceback; traceback.print_exc()
+
+def _chaotic_auto_video_impl(gui):
+    import os as _os, threading as _th, subprocess as _sp
+    from tkinter import filedialog as _fd, messagebox as _mb
+    # Ask source video
+    src = _fd.askopenfilename(title="Select source video for Auto prep (whole video will be auto-trimmed)", filetypes=[("Video","*.mp4 *.mov *.avi *.mkv *.webm"),("All","*.*")])
+    if not src or not _os.path.isfile(src):
+        return
+    # Ask output folder - default to image folder if set, else same dir as src
+    default_out = ""
+    try:
+        default_out = gui.image_folder_var.get() if hasattr(gui, 'image_folder_var') else ""
+        if not default_out or not _os.path.isdir(default_out):
+            default_out = _os.path.dirname(src)
+    except: default_out = _os.path.dirname(src)
+    out_dir = _fd.askdirectory(title="Select output folder for auto clips (whole video will be split)", initialdir=default_out)
+    if not out_dir:
+        return
+    try: _os.makedirs(out_dir, exist_ok=True)
+    except: pass
+    # Run in thread to not block GUI
+    def _worker():
+        try:
+            import gizmo as _gz
+            ffmpeg = _gz.find_ffmpeg()
+            if not ffmpeg or not _os.path.isfile(ffmpeg):
+                _mb.showerror("Auto - no ffmpeg", "ffmpeg not found (needs imageio-ffmpeg). Run install_fizgig.bat again.")
+                return
+            info = _gz.probe_source(ffmpeg, src)
+            fps = info.get("fps") or 24.0
+            duration = info.get("duration") or 0
+            if duration <= 0:
+                _mb.showerror("Auto - cannot read", f"Could not probe duration for {src}")
+                return
+            total_frames = int(round(duration * fps))
+            # Auto choose: split whole video into sequential valid GRID_FRAMES chunks
+            # Use largest possible to minimize clips: prefer 124, then 107 etc, covering remainder
+            GRID = list(_gz.GRID_FRAMES)  # 5,22,39,56,73,90,107,124
+            # Simple greedy: while remaining, pick largest GRID <= remaining, else smallest
+            remaining = total_frames
+            start_f = 0
+            clips = []
+            while remaining > 0:
+                # pick largest grid <= remaining
+                pick = None
+                for g in reversed(GRID):
+                    if g <= remaining:
+                        pick = g
+                        break
+                if pick is None:
+                    # remaining smaller than smallest (5) -> merge with last clip or pad
+                    # Extend last clip by padding with duplicated frames via -frames (ffmpeg will handle)
+                    # For simplicity, break and pad last clip to smallest
+                    remaining = 0
+                    break
+                clips.append((start_f, pick))
+                start_f += pick
+                remaining -= pick
+            if not clips:
+                _mb.showerror("Auto - too short", f"Video is {total_frames} frames at {fps}fps, smaller than smallest valid {GRID[0]}.")
+                return
+            # For each clip, export via gizmo.build_export_command
+            from gizmo import target_size as _target_size, build_export_command as _build
+            src_w, src_h = info["display_width"], info["display_height"]
+            sar = info.get("sar",1.0)
+            # Use 0.25 MP as safe default for 8GB (user can change Target Megapixels later, clips are cut at native then resized at train time)
+            # We cut at native resolution then let training resize, so width/height here are native snapped
+            # For auto we just use native snapped size
+            success = 0
+            failed = []
+            for idx, (sf, frames) in enumerate(clips):
+                start_s = sf / fps
+                # target size at native (snap to 32, keep aspect)
+                w, h = _target_size(src_w, src_h, megapixels=10.0)  # 10MP ~ native (clamped to max_w*h)
+                # ensure multiples of 32
+                w, h = max(32, w // 32 * 32), max(32, h // 32 * 32)
+                dst = _gz.output_name(src, out_dir, muted=False, claimed=[])
+                # ensure unique name for sequential clips
+                base, ext = _os.path.splitext(dst)
+                if idx > 0:
+                    dst = f"{base}_{idx+1:02d}{ext}"
+                cmd = _build(ffmpeg, src, dst, start_s, frames, w, h, keep_every=None, with_audio=True, crop=None, sar=sar)
+                # Run ffmpeg
+                try:
+                    p = _gz._run(cmd)
+                    if p.returncode == 0 and _os.path.isfile(dst):
+                        success += 1
+                    else:
+                        failed.append(f"clip {idx+1} {frames}f failed: {(p.stderr or b'')[:200].decode(errors='ignore')}")
+                except Exception as e:
+                    failed.append(str(e))
+            # Also auto-handle audio: ensure 32k stereo via build_export_command already does atrim 32k
+            msg = f"Auto finished: {success}/{len(clips)} clips written to {out_dir}\nEach clip is 17n+5 frames @24fps, 32k stereo, multiples of 32."
+            if failed:
+                msg += "\n\nFailed:\n" + "\n".join(failed[:5])
+            _mb.showinfo("Auto - done", msg)
+            # Optionally set image folder to out_dir
+            try:
+                if hasattr(gui, 'image_folder_var'):
+                    gui.image_folder_var.set(out_dir)
+            except: pass
+        except Exception as e:
+            import traceback as _tb
+            _mb.showerror("Auto - error", f"{type(e).__name__}: {e}\n{_tb.format_exc()[:800]}")
+    _th.Thread(target=_worker, daemon=True).start()
+
+def _patch_optimizer_tooltips(self):
+    # Add tooltips for optimizer args / scheduler specifics
+    try:
+        import lora_trainer_gui as gui_mod
+        ToolTip = gui_mod.ToolTip
+        # Optimizer args tooltip - explains per-optimizer specific args
+        if "OPTIMIZER_ARGS" in self.entries:
+            ent = self.entries["OPTIMIZER_ARGS"]
+            # Master tooltip covering many optimizers
+            tip = (
+                "Extra optimizer kwargs as key=value pairs, space separated.\n\n"
+                "adamw/adamw8bit: weight_decay=0.01 betas=0.9,0.999 eps=1e-8\n"
+                "lion8bit: needs ~1/10 AdamW LR (sign update)\n"
+                "automagic/v3: lr=1e-6 min_lr=1e-8 max_lr=1e3 beta2=0.999 eps=1e-30 clip_threshold=1.0 weight_decay=0.0 polarity_history=8 fused=True\n"
+                "  v3 pools polarity_history (2-64, default 8) - no gain knob, lr*=exp(vote)\n"
+                "ademamix8bit: weight_decay=0.01 betas=0.9,0.99 (slow EMA)\n"
+                "paged*: same as base but pages to CPU under pressure"
+            )
+            ToolTip(ent, tip)
+        # Scheduler tooltips
+        if "LR_SCHEDULER" in self.entries:
+            ent = self.entries["LR_SCHEDULER"]
+            ToolTip(ent, "constant (default) | constant_with_warmup | cosine | cosine_with_restarts | linear | polynomial | rex\nWarmup steps only for schedulers with warmup")
+        if "LR_WARMUP_STEPS" in self.entries:
+            ent = self.entries["LR_WARMUP_STEPS"]
+            ToolTip(ent, "Warmup steps: linear warmup from 0 to lr. 0 = no warmup. Useful for large LR or automagic.")
+        # Sample generation enable tooltip already exists, but ensure
+        if hasattr(self, 'sample_enabled_check'):
+            ToolTip(self.sample_enabled_check, "Uncheck to skip sample generation during training (faster, less VRAM). Chaotic default: unchecked.")
+    except Exception as e:
+        print(f"[chaotic] tooltip patch failed: {e}")
 
