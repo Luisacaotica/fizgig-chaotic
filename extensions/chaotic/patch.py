@@ -593,19 +593,20 @@ def _inject_chaotic_samples_ui(self):
                     if r > max_row: max_row = r
         except: max_row = 10
         r = max_row + 1
-        ttk.Separator(prompt_card, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
-        r+=1
-        tk.Label(prompt_card, text="Chaotic — Krea2 Ostris Edit (test edit in sampling)", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,2))
-        r+=1
-        tk.Label(prompt_card, text="Qwen3-VL vision (384px) + VAE latents (1MP t=0) + kv_cache. Use to test if edit LoRA works live - refs become tokens at t=0 (index_timestep_zero).", font=("Segoe UI", 8), fg=_C["text_muted"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0,4))
-        r+=1
-        tk.Label(prompt_card, text="Reference images (up to 3) — Picture N + VAE:", font=("Segoe UI", 9, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,2))
-        r+=1
+        # Container for Krea2 edit so we can hide/show on arch change (H3 glitch fix)
+        container = tk.Frame(prompt_card, bg=_C["bg_surface"])
+        container.grid(row=r, column=0, columnspan=3, sticky=tk.EW, padx=5, pady=5)
+        self._chaotic_krea2_container = container
+        # Inside container use pack for simplicity (hidden via container grid_remove)
+        ttk.Separator(container, orient="horizontal").pack(fill=tk.X, pady=6)
+        tk.Label(container, text="Chaotic — Krea2 Ostris Edit (test edit in sampling)", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).pack(anchor=tk.W, padx=5, pady=(2,2))
+        tk.Label(container, text="Qwen3-VL vision (384px) + VAE latents (1MP t=0) + kv_cache. Use to test if edit LoRA works live - refs become tokens at t=0 (index_timestep_zero).", font=("Segoe UI", 8), fg=_C["text_muted"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0,4))
+        tk.Label(container, text="Reference images (up to 3) — Picture N + VAE:", font=("Segoe UI", 9, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).pack(anchor=tk.W, padx=5, pady=(4,2))
         self._chaotic_krea2_images = []
         self._chaotic_kv_cache = tk.BooleanVar(value=False)
         for idx in range(3):
-            fr = ttk.Frame(prompt_card)
-            fr.grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
+            fr = ttk.Frame(container)
+            fr.pack(fill=tk.X, padx=5, pady=2, anchor=tk.W)
             ttk.Label(fr, text=f"Image {idx+1}:").pack(side=tk.LEFT, padx=(0,4))
             var = tk.StringVar(value="")
             ent = ttk.Entry(fr, textvariable=var, width=42)
@@ -619,15 +620,35 @@ def _inject_chaotic_samples_ui(self):
                 return _b
             ttk.Button(fr, text="Browse", command=_mk()).pack(side=tk.LEFT, padx=(4,0))
             ttk.Button(fr, text="Clear", command=lambda v=var: v.set("")).pack(side=tk.LEFT, padx=(2,0))
-            r+=1
-        kv_fr = ttk.Frame(prompt_card)
-        kv_fr.grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
+        kv_fr = ttk.Frame(container)
+        kv_fr.pack(fill=tk.X, padx=5, pady=4, anchor=tk.W)
         ttk.Checkbutton(kv_fr, text="kv_cache (LoRA trained with kv_cache=true)", variable=self._chaotic_kv_cache).pack(side=tk.LEFT)
         self.entries['CHAOTIC_KV_CACHE'] = self._chaotic_kv_cache
         tk.Label(kv_fr, text="off=normal edit, on=cached KV (faster, only if LoRA trained with it)", font=("Segoe UI", 8), fg=_C["text_muted"], bg=_C["bg_surface"]).pack(side=tk.LEFT, padx=(8,0))
-        r+=1
-        tk.Label(prompt_card, text="How to test: select 1-3 refs, keep VAE connected (for VAE latent), prompt with trigger, Generate Sample. Refs are encoded via Qwen (semantic) + VAE (t=0).", font=("Segoe UI", 8, "italic"), fg=_C["text_explain"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,0))
-        print("[chaotic] Krea2 edit injected into Prompt & Dimensions card")
+        tk.Label(container, text="How to test: select 1-3 refs, keep VAE connected (for VAE latent), prompt with trigger, Generate Sample. Refs are encoded via Qwen (semantic) + VAE (t=0).", font=("Segoe UI", 8, "italic"), fg=_C["text_explain"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(4,0))
+        # Arch-aware visibility: show only for Krea2, hide for Klein/H3
+        def _update_krea2_visibility(*_a):
+            try:
+                is_krea2 = False
+                if hasattr(self, '_is_krea2_arch'):
+                    is_krea2 = self._is_krea2_arch()
+                elif hasattr(self, 'architecture_var'):
+                    is_krea2 = "Krea" in str(self.architecture_var.get())
+                if is_krea2:
+                    container.grid()
+                else:
+                    container.grid_remove()
+            except: pass
+        # trace arch change + call once
+        try:
+            if hasattr(self, 'architecture_var'):
+                self.architecture_var.trace_add("write", lambda *_: _update_krea2_visibility())
+            # also hook the sample arch combo if exists
+            if hasattr(self, '_samples_arch_combo'):
+                self._samples_arch_combo.bind("<<ComboboxSelected>>", lambda e: _update_krea2_visibility())
+        except: pass
+        _update_krea2_visibility()
+        print("[chaotic] Krea2 edit injected into Prompt & Dimensions card (Krea2-only, hidden for H3)")
     except Exception as e:
         print(f"[chaotic] samples card failed: {e}")
         import traceback; traceback.print_exc()
