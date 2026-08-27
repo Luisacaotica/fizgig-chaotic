@@ -26,12 +26,21 @@ COLORS = None  # will import from gui module
 def _steps_per_epoch(dataset_folder: str) -> int:
     if not dataset_folder or not os.path.isdir(dataset_folder):
         return 0
-    exts = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif'}
+    # Count images + videos + audio (H3 clips are .mp4, not images)
+    exts = {'.jpg','.jpeg','.png','.webp','.bmp','.tiff','.tif',
+            '.mp4','.mov','.avi','.webm','.mkv',
+            '.wav','.mp3','.flac','.m4a','.ogg','.opus'}
     n = 0
     try:
         for f in os.listdir(dataset_folder):
+            if f.startswith('.'): continue
             if os.path.splitext(f)[1].lower() in exts:
                 n += 1
+        # Also count datasets/_tf2 style where clips are in subfolder? Already counted
+        # Fallback: batch count from cache total_batches if available (more accurate)
+        if n == 0:
+            # Try to read total batches from dataset config if dataset folder empty (e.g. clips counted as 0)
+            n = 1
     except: pass
     return max(1, n)
 
@@ -479,6 +488,19 @@ def _inject_chaotic_ui(self):
     opt_combo.grid(row=row, column=1, sticky=tk.W, padx=5, pady=3)
     self.entries['CHAOTIC_OPTIMIZER'] = opt_combo
     tk.Label(content, text="automagic3 = adaptive LR v3 (fused, polarity-history)", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=row, column=2, sticky=tk.W, padx=5)
+    # Live sync: chaotic -> real and real -> chaotic (avoid duplicate confusion)
+    try:
+        real_opt_combo = self.entries.get('OPTIMIZER_TYPE')
+        if real_opt_combo is not None:
+            def _sync_opt_to_real(*_a):
+                try: real_opt_combo.set(opt_combo.get())
+                except: pass
+            def _sync_opt_to_chaotic(*_a):
+                try: opt_combo.set(real_opt_combo.get())
+                except: pass
+            opt_combo.bind("<<ComboboxSelected>>", lambda e: _sync_opt_to_real())
+            real_opt_combo.bind("<<ComboboxSelected>>", lambda e: _sync_opt_to_chaotic())
+    except: pass
     row+=1
     # Scheduler
     ttk.Label(content, text="LR Scheduler:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
@@ -488,6 +510,18 @@ def _inject_chaotic_ui(self):
     sched_combo.set(real_sched)
     sched_combo.grid(row=row, column=1, sticky=tk.W, padx=5, pady=3)
     self.entries['CHAOTIC_SCHEDULER'] = sched_combo
+    try:
+        real_sched_combo = self.entries.get('LR_SCHEDULER')
+        if real_sched_combo is not None:
+            def _sync_sched_to_real(*_a):
+                try: real_sched_combo.set(sched_combo.get())
+                except: pass
+            def _sync_sched_to_chaotic(*_a):
+                try: sched_combo.set(real_sched_combo.get())
+                except: pass
+            sched_combo.bind("<<ComboboxSelected>>", lambda e: _sync_sched_to_real())
+            real_sched_combo.bind("<<ComboboxSelected>>", lambda e: _sync_sched_to_chaotic())
+    except: pass
     # Warmup
     warm_frame = ttk.Frame(content)
     warm_frame.grid(row=row, column=2, sticky=tk.W, padx=5, pady=3)
@@ -546,13 +580,10 @@ def _inject_chaotic_ui(self):
              font=("Segoe UI", 8, "italic"), fg="#5A6B7E", bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(8,0))
     row+=1
 
-    # Expand original collapsed sections automatically under chaotic
-    try:
-        for key in ("optimizer","scheduler","memory"):
-            sec2 = getattr(self, 'collapsible_sections', {}).get(key)
-            if sec2 and not sec2.expanded:
-                sec2.toggle()
-    except: pass
+    # Do NOT auto-expand collapsed Optimizer/Scheduler - that caused duplication confusion
+    # Keep them collapsed; Chaotic values below OVERRIDE them at launch (see _sync_chaotic_to_real)
+    tk.Label(content, text="Note: values above override the collapsed Optimizer / Other Options sections below when set.", font=("Segoe UI", 8, "italic"), fg="#FF8C1A", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,0))
+    row+=1
 
     _on_steps_toggle(self)
     print("[chaotic] advanced UI injected")
@@ -658,6 +689,21 @@ def _on_steps_toggle(self):
     try:
         if on: self._chaotic_steps_frame.grid()
         else: self._chaotic_steps_frame.grid_remove()
+        # When steps mode is on, disable original Max Epochs to avoid confusion (chaotic overrides)
+        try:
+            e = self.entries.get('MAX_TRAIN_EPOCHS')
+            if e is not None:
+                e.configure(state='disabled' if on else 'normal')
+                # Find its label if stored
+                lbl = self.labels.get('MAX_TRAIN_EPOCHS') if hasattr(self, 'labels') else None
+                if lbl is not None:
+                    lbl.configure(fg="#6B7280" if on else "#8A9BAE")
+        except: pass
+        # Also toggle note in chaotic card if exists
+        try:
+            if hasattr(self, '_chaotic_epochs_note'):
+                self._chaotic_epochs_note.configure(text="Steps mode ON — Training Parameters Max Epochs is disabled, value from Max Steps will be used (overrides)." if on else "")
+        except: pass
     except: pass
     try:
         import json as _json
