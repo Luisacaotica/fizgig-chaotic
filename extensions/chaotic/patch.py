@@ -207,9 +207,12 @@ def apply_chaotic_patches(GUIClass):
             swapped = False
             old_val = None
             try:
-                if getattr(self, '_chaotic_steps_mode', None) and self._chaotic_steps_mode.get():
-                    e_widget = self.entries.get('MAX_TRAIN_EPOCHS')
-                    steps_widget = self.entries.get('CHAOTIC_STEPS')
+                is_steps = bool(getattr(self, '_chaotic_steps_mode', None) and self._chaotic_steps_mode.get())
+                e_widget = self.entries.get('MAX_TRAIN_EPOCHS')
+                steps_widget = self.entries.get('CHAOTIC_STEPS')
+                steps_raw = steps_widget.get().strip() if steps_widget is not None else "?"
+                print(f"[chaotic] start check: steps_mode={is_steps} steps_raw='{steps_raw}' epochs_entry='{e_widget.get() if e_widget else '?'}' folder='{self.image_folder_var.get() if hasattr(self,'image_folder_var') else '?'}'")
+                if is_steps:
                     if e_widget is not None and steps_widget is not None:
                         try:
                             steps = int(steps_widget.get().strip())
@@ -217,12 +220,21 @@ def apply_chaotic_patches(GUIClass):
                         if steps > 0:
                             folder = self.image_folder_var.get() if hasattr(self, 'image_folder_var') else ''
                             spe = _steps_per_epoch(folder)
+                            # fallback: if folder empty, use total batches from log (9)
+                            if spe <= 0:
+                                spe = 1
                             epochs = _epochs_from_steps(steps, spe)
                             old_val = e_widget.get()
                             e_widget.delete(0, tk.END)
                             e_widget.insert(0, str(epochs))
                             swapped = True
-                            print(f"[chaotic] Steps {steps} -> epochs {epochs} (spe={spe})")
+                            print(f"[chaotic] Steps {steps} -> epochs {epochs} (spe={spe} folder={folder})")
+                        else:
+                            print(f"[chaotic] steps_mode ON but steps={steps} invalid, using epochs")
+                    else:
+                        print("[chaotic] steps_mode ON but widgets missing")
+                else:
+                    print("[chaotic] steps_mode OFF — using Max Epochs directly (check 'Use Steps instead of Epochs')")
             except Exception as e:
                 print(f"[chaotic] pre-start steps swap failed: {e}")
             try:
@@ -286,7 +298,6 @@ def _sync_chaotic_to_real(self):
         'CHAOTIC_WARMUP': 'LR_WARMUP_STEPS',
         'CHAOTIC_GRAD_ACCUM': 'GRADIENT_ACCUMULATION',
         'CHAOTIC_MAX_NORM': 'MAX_GRAD_NORM',
-        'CHAOTIC_SAVE_EVERY': 'SAVE_EVERY_N_EPOCHS',
         'CHAOTIC_DROPOUT': 'NETWORK_DROPOUT',
     }
     for src, dst in mapping.items():
@@ -294,15 +305,38 @@ def _sync_chaotic_to_real(self):
             try:
                 val = self.entries[src].get()
                 dst_w = self.entries[dst]
-                # ttk.Combobox vs Entry handling
                 try:
                     dst_w.delete(0, tk.END)
                     dst_w.insert(0, str(val))
                 except:
-                    try:
-                        dst_w.set(str(val))
+                    try: dst_w.set(str(val))
                     except: pass
             except: pass
+    # Save Every: handle steps vs epochs deduped
+    try:
+        if 'CHAOTIC_SAVE_EVERY' in self.entries and 'SAVE_EVERY_N_EPOCHS' in self.entries:
+            raw = self.entries['CHAOTIC_SAVE_EVERY'].get().strip()
+            try: v = int(raw)
+            except: v = 1
+            if getattr(self, '_chaotic_steps_mode', None) and self._chaotic_steps_mode.get():
+                # steps -> epochs
+                spe = _steps_per_epoch(self.image_folder_var.get() if hasattr(self,'image_folder_var') else '')
+                if spe <= 0: spe = 1
+                # for H3 with 9 clips, save every 30 steps = ceil(30/9)=4 epochs
+                epochs_save = _epochs_from_steps(v, spe) if v>0 else 1
+                dst_w = self.entries['SAVE_EVERY_N_EPOCHS']
+                try:
+                    dst_w.delete(0, tk.END)
+                    dst_w.insert(0, str(epochs_save))
+                except: pass
+                print(f"[chaotic] Save Every {v} steps -> {epochs_save} epochs (spe={spe})")
+            else:
+                dst_w = self.entries['SAVE_EVERY_N_EPOCHS']
+                try:
+                    dst_w.delete(0, tk.END)
+                    dst_w.insert(0, str(v))
+                except: pass
+    except: pass
 
 def _apply_orange_ttk_style(self):
     try:
@@ -555,21 +589,38 @@ def _inject_chaotic_ui(self):
     self.entries['CHAOTIC_MAX_NORM'] = mgn_ent
     row+=1
 
-    # Save every / dropout
-    ttk.Label(content, text="Save Every N epochs:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
+    # Save every (deduped: single source, toggles epochs<->steps) / dropout
+    self._chaotic_save_label = ttk.Label(content, text="Save Every N epochs:")
+    self._chaotic_save_label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
     se_ent = ttk.Entry(content, width=8)
     try: se_ent.insert(0, str(self.entries.get('SAVE_EVERY_N_EPOCHS').get() or "1"))
     except: se_ent.insert(0, "1")
     se_ent.grid(row=row, column=1, sticky=tk.W, padx=5, pady=3)
     self.entries['CHAOTIC_SAVE_EVERY'] = se_ent
-    tmp2 = ttk.Frame(content); tmp2.grid(row=row, column=2, sticky=tk.W, padx=5, pady=3)
-    ttk.Label(tmp2, text="Network Dropout:").pack(side=tk.LEFT, padx=(0,4))
-    do_ent = ttk.Entry(tmp2, width=6)
+    # hint that updates with steps toggle
+    self._chaotic_save_hint = tk.Label(content, text="", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"])
+    self._chaotic_save_hint.grid(row=row, column=2, sticky=tk.W, padx=5)
+    # Network Dropout on same row right side (keep)
+    # Use second row for dropout to avoid crowding when hint shows
+    row+=1
+    ttk.Label(content, text="Network Dropout:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
+    do_ent = ttk.Entry(content, width=8)
     try: do_ent.insert(0, str(self.entries.get('NETWORK_DROPOUT').get() or "0.0"))
     except: do_ent.insert(0, "0.0")
-    do_ent.pack(side=tk.LEFT)
+    do_ent.grid(row=row, column=1, sticky=tk.W, padx=5, pady=3)
     self.entries['CHAOTIC_DROPOUT'] = do_ent
+    tk.Label(content, text="0.0 = off, 0.1 = 10% drop", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=row, column=2, sticky=tk.W, padx=5)
     row+=1
+    # Hide duplicate original SAVE_EVERY_N_EPOCHS row to avoid "2 parameters same"
+    try:
+        orig_row = self.rows.get('SAVE_EVERY_N_EPOCHS')
+        if orig_row:
+            # don't destroy, just grey out and note
+            try: orig_row['label'].configure(text="Save Every N Epochs (use Chaotic above):")
+            except: pass
+            try: orig_row['entry'].configure(state='disabled')
+            except: pass
+    except: pass
 
     # Caption dropout / noise (AI-Toolkit)
     ttk.Label(content, text="Caption Dropout:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
@@ -1304,10 +1355,22 @@ def _on_steps_toggle(self):
             e = self.entries.get('MAX_TRAIN_EPOCHS')
             if e is not None:
                 e.configure(state='disabled' if on else 'normal')
-                # Find its label if stored
                 lbl = self.labels.get('MAX_TRAIN_EPOCHS') if hasattr(self, 'labels') else None
                 if lbl is not None:
                     lbl.configure(fg="#6B7280" if on else "#8A9BAE")
+        except: pass
+        # Toggle save label/hint between epochs vs steps
+        try:
+            if hasattr(self, '_chaotic_save_label'):
+                self._chaotic_save_label.configure(text="Save Every N steps:" if on else "Save Every N epochs:")
+            if hasattr(self, '_chaotic_save_hint'):
+                if on:
+                    # show conversion hint
+                    spe = _steps_per_epoch(self.image_folder_var.get() if hasattr(self,'image_folder_var') else '')
+                    hint = f"steps → ~epochs ceil(steps/{spe})" if spe else "steps → epochs at train"
+                    self._chaotic_save_hint.configure(text=hint)
+                else:
+                    self._chaotic_save_hint.configure(text="1 = every epoch")
         except: pass
         # Also toggle note in chaotic card if exists
         try:

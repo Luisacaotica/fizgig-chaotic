@@ -30,11 +30,11 @@ New `CollapsibleFrame` **"Chaotic — Advanced Training (AI-Toolkit parity)"** p
 | `Warmup steps` | `LR_WARMUP_STEPS` | `train.lr_warmup_steps` |
 | `Grad Accum` | `GRADIENT_ACCUMULATION` | `train.gradient_accumulation` |
 | `Max Grad Norm` | `MAX_GRAD_NORM` | `train.max_grad_norm` |
-| `Save Every N epochs` | `SAVE_EVERY_N_EPOCHS` | `save.save_every` |
+| `Save Every N epochs` / `Save Every N steps` (toggle) | `SAVE_EVERY_N_EPOCHS` | `save.save_every` |
 | `Network Dropout` | `NETWORK_DROPOUT` | `network.dropout` |
 | `Caption Dropout` (0.05 default) | new `CHAOTIC_CAPTION_DROPOUT` persisted, maps to dataset `caption_dropout_rate` | `datasets[].caption_dropout_rate` |
 
-Original collapsed sections (`Optimizer`, `Other Options`, `Memory & Precision`) auto-expand when Chaotic is active.
+Deduped: original `Save Every N Epochs` row greyed/disarmed (`_sync_chaotic_to_real`), Chaotic card is single source. When `Use Steps instead of Epochs` is ON, Chaotic `Save Every` is interpreted as **steps** → `epochs = ceil(steps / spe)` (`spe = num_images/clips` `patch.py:_steps_per_epoch`), e.g. 9 clips, `Save Every 30 steps` → `4 epochs`. When OFF, interpreted as epochs. Label + hint toggle via `_on_steps_toggle`.
 
 ### 4 — LoRA adapter (not missing — now visible)
 - Fizgig already trains LoRA + LoKR (`src/fizgig/networks/lora.py:23` `LoRAModule`, `LoKRModule` kronecker) → Kohya `.safetensors`, ComfyUI-ready.
