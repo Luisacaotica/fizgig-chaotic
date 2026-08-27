@@ -735,37 +735,36 @@ def _inject_chaotic_start_ui(self):
         card.grid_columnconfigure(1, weight=1)
         # Move card to be above Post-Training Tools (below Training image folder)
         try:
+            # Find Training image folder card and Post-Training Tools card by searching for their titles
+            def _contains_text(widget, text):
+                for c in widget.winfo_children():
+                    try:
+                        if isinstance(c, tk.Label) and text in str(c.cget("text")):
+                            return True
+                    except: pass
+                    if _contains_text(c, text):
+                        return True
+                return False
+            training_card = None
             post_card = None
             for ch in outer.winfo_children():
-                # check if this child is the Post-Training Tools card
-                try:
-                    # _start_section_card creates a Frame with highlight and containing labels
-                    # Search recursively for label with "Post-Training Tools"
-                    def _has_post(w):
-                        for c in w.winfo_children():
-                            try:
-                                if isinstance(c, tk.Label) and "Post-Training Tools" in str(c.cget("text")):
-                                    return w
-                                # also check nested
-                                res = _has_post(c)
-                                if res: return res
-                            except: pass
-                        return None
-                    found = _has_post(ch)
-                    if found:
-                        post_card = found
-                        # found is the card itself (Frame with highlight)
-                        # But _has_post returns the card, which is ch
-                        # In some cases card is ch itself
-                        if post_card != card:
-                            break
-                except: pass
-            if post_card is not None and post_card != card:
+                if _contains_text(ch, "Training image folder"):
+                    training_card = ch
+                if _contains_text(ch, "Post-Training Tools"):
+                    post_card = ch
+            # Prefer packing after Training image folder (more reliable than before Post)
+            target_after = training_card if training_card is not None else None
+            if target_after is not None and target_after != card:
+                card.pack_forget()
+                card.pack(fill=tk.X, padx=36, pady=(0,16), after=target_after)
+                print(f"[chaotic] Start card reordered after Training image folder (above Post-Training)")
+            elif post_card is not None and post_card != card:
                 card.pack_forget()
                 card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
-                print(f"[chaotic] Start card reordered before Post-Training Tools")
+                print(f"[chaotic] Start card reordered before Post-Training Tools (fallback)")
         except Exception as e:
             print(f"[chaotic] start reorder failed: {e}")
+            import traceback; traceback.print_exc()
         # Enable Control
         if not hasattr(self, '_chaotic_enable_control'):
             self._chaotic_enable_control = tk.BooleanVar(value=bool(getattr(self, '_chaotic_control_dir_var', tk.StringVar()).get() if hasattr(self, '_chaotic_control_dir_var') else False))
