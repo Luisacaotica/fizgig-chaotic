@@ -240,12 +240,68 @@ def apply_chaotic_patches(GUIClass):
             try:
                 return orig_start(self)
             finally:
+                # If caption worker is pending, _start_training_launch will be called later async
+                # — keep swapped value until launch, restore there.
+                is_pending = bool(getattr(self, "_training_start_pending", False) or getattr(self, "_caption_worker_alive", lambda: False)())
+                if swapped and not is_pending:
+                    try:
+                        e_widget.delete(0, tk.END)
+                        e_widget.insert(0, old_val)
+                    except: pass
+                elif swapped and is_pending:
+                    # store for later restore in _start_training_launch
+                    try:
+                        self._chaotic_pending_old_epochs = old_val
+                        self._chaotic_pending_swapped = True
+                        print(f"[chaotic] steps swap kept pending until _start_training_launch (epochs={e_widget.get()})")
+                    except: pass
+        GUIClass.start_training = patched_start
+
+    # Also patch _start_training_launch for async case (text encoder caching delays launch)
+    if hasattr(GUIClass, '_start_training_launch'):
+        orig_launch = GUIClass._start_training_launch
+        def patched_launch(self):
+            swapped = False
+            old_val = None
+            e_widget = self.entries.get('MAX_TRAIN_EPOCHS')
+            steps_widget = self.entries.get('CHAOTIC_STEPS')
+            # If start_training already swapped and pending, e_widget already has converted epochs
+            has_pending = hasattr(self, '_chaotic_pending_old_epochs')
+            if not has_pending and getattr(self, '_chaotic_steps_mode', None) and self._chaotic_steps_mode.get():
+                if e_widget is not None and steps_widget is not None:
+                    try:
+                        steps = int(steps_widget.get().strip())
+                    except: steps = 0
+                    if steps > 0:
+                        folder = self.image_folder_var.get() if hasattr(self, 'image_folder_var') else ''
+                        spe = _steps_per_epoch(folder)
+                        if spe <= 0: spe = 1
+                        epochs = _epochs_from_steps(steps, spe)
+                        old_val = e_widget.get()
+                        e_widget.delete(0, tk.END)
+                        e_widget.insert(0, str(epochs))
+                        swapped = True
+                        print(f"[chaotic] _launch Steps {steps} -> epochs {epochs} (spe={spe})")
+            # else: already swapped via start_training pending, just use current value
+            try:
+                return orig_launch(self)
+            finally:
                 if swapped:
                     try:
                         e_widget.delete(0, tk.END)
                         e_widget.insert(0, old_val)
                     except: pass
-        GUIClass.start_training = patched_start
+                elif has_pending:
+                    try:
+                        e_widget.delete(0, tk.END)
+                        e_widget.insert(0, self._chaotic_pending_old_epochs)
+                        print(f"[chaotic] restored epochs to {self._chaotic_pending_old_epochs} after launch")
+                    except: pass
+                    try: delattr(self, '_chaotic_pending_old_epochs')
+                    except: pass
+                    try: delattr(self, '_chaotic_pending_swapped')
+                    except: pass
+        GUIClass._start_training_launch = patched_launch
 
     # Patch TOML generation if exists (fallback)
     for meth_name in ('_generate_dataset_toml', '_build_dataset_config', '_write_dataset_config', '_create_dataset_config'):
