@@ -41,6 +41,18 @@ Original collapsed sections (`Optimizer`, `Other Options`, `Memory & Precision`)
 - Chaotic surfaces: `Training Parameters → Network Type: LoRA (standard) vs LoKR (Kronecker)` + `LoKR Factor 8` + `Context LoRA` (`CONTEXT_LORA_PATH` at `lora_trainer_gui.py:4183`) = AI-Toolkit `network.type=lokr` / `control_lora`.
 - 8GB tip: rank 8-16, 0.25 MP, Auto VRAM for RTX 4060 Ti 8GB.
 
+### 5 — Krea2 Ostris Edit (Sampling tab, English only)
+- **Where:** **Samples tab → Prompt & Dimensions card → bottom** — `Chaotic — Krea2 Ostris Edit (test edit in sampling)` (previously in Training, moved per request for live testing). Injected directly into `prompt_card` (`lora_trainer_gui.py:10384`) so it sits *below* Width/Height/Steps/Seed/Reference, *together* with Prompt & Dimensions.
+- **What:** 3 reference pickers `Image 1..3` (`CHAOTIC_KREA2_IMG1..3`) + `kv_cache` toggle (`CHAOTIC_KV_CACHE`). Mirrors `comfyui-krea2-ostris-edit/nodes.py:64` `TextEncodeKrea2OstrisEdit`: Qwen3-VL vision `384*384` (`VLM_MAX_PIXELS`) + VAE latents `1MP snap 16` (`REF_LATENT_MAX_PIXELS`) → `index_timestep_zero` (`nodes.py:227` `_forward_with_refs` at `t=0`, split modulation `_block_ref_forward:195`). `kv_cache` = one-pass `K/V` precompute (`nodes.py:307` `_precompute_ref_kv`) reused per denoising step.
+- **How to test:** select 1-3 refs, keep VAE connected, prompt with trigger, Generate Sample. Refs are encoded via Qwen (semantic) + VAE (t=0). Training card shows `moved → Samples tab` note.
+
+### 6 — Automagic optimizers (v1/v2/v3)
+- **Where:** Training → `Chaotic — Advanced Training` → `Optimizer` dropdown now includes `automagic`, `automagic2`, `automagic3`
+- **What:** Ported from `F:\AI-Toolkit-Easy-Install\AI-Toolkit\toolkit\optimizers\automagic3.py:1` (`Automagic3: polarity_history` fused adaptive LR) into `extensions/chaotic/optimizers/automagic{,2,3}.py`. Injected into `src/fizgig/training/optimizers.py:39` `_CATALOG` via `_patch_automagic_catalog()` (`extensions/chaotic/patch.py`). Previously removed in `optimizers.py:33` (prodigy/came/adafactor), now available as `automagic3` (recommended v3).
+
+### 7 — Black & Orange theme
+- **Where:** `launch_chaotic.*` only (vanilla stays blue). `CHAOTIC_COLORS` (`patch.py:43` `bg_deep #0A0A0A`, `accent #FF6B00`) overrides `lora_trainer_gui.py:55` `COLORS` before widgets, plus `clam` ttk style (`TButton`, `TNotebook.Tab`, `Progressbar`). Title gets `[CHAOTIC]` / `[CHAOTIC - ORANGE]`.
+
 ## How it survives updates
 - Lives in `extensions/chaotic/` (`patch.py`, `README.md`, `fork_guide.md`). Loaded via `launch_chaotic.pyw` which imports `lora_trainer_gui`, patches `LoRATrainerGUI` class (`apply_chaotic_patches`), then instantiates it — no core file edited → `git pull` / `update_fizgig.bat` safe.
 - Title proves it: window title gets ` [CHAOTIC]` / `CHAOTIC (Luisa Caotica)` (`launch_chaotic.pyw`).
@@ -85,7 +97,9 @@ See `extensions/chaotic/fork_guide.md` for details.
 - `launch_chaotic.pyw:1` — Chaotic launcher (patched, correct `LoRATrainerGUI` instantiation, avoids `runpy` lost-patch bug)
 - `launch_chaotic.bat:1` — ASCII, wscript silent
 - `run_chaotic_silent.vbs:1` / `run_chaotic_console.bat:1` — launch helpers
-- `extensions/chaotic/patch.py:1` — monkey-patches: `__init__`, `start_training`, TOML, advanced card injection
+- `extensions/chaotic/patch.py:1` — monkey-patches: `__init__`, `start_training`, TOML, Chaotic card (below Presets→above Output), Prompt & Dimensions injection, automagic catalog, orange theme
+- `extensions/chaotic/krea2_ostris_edit.py:1` — Ostris port: `VLM 384px + VAE 1MP t=0` + `kv_cache` (`_pack_refs_fizgig`, `apply_krea2_ostris_patch`)
+- `extensions/chaotic/optimizers/automagic{,2,3}.py:1` — Automagic v1/v2/v3 ported from `toolkit/optimizers/` (MIT)
 - `presets/chaotic.json` — remembers Steps toggle
 
 Questions: open issue in `Luisacaotica/fizgig-chaotic` or ping Luisa Caotica.

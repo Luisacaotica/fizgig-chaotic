@@ -30,14 +30,17 @@
 </p>
 
 > ### ✦ Chaotic Fork — Luisa Caotica Edition
-> **AI-Toolkit parity, 8GB VRAM tuned, survives `git pull`.** This is [Luisacaotica/fizgig-chaotic](https://github.com/Luisacaotica/fizgig-chaotic) — a drop-in extension on top of vanilla Fizgig.
-> - **Steps vs Epochs** — `Max Steps` toggle in Training (AI-Toolkit `train.steps` = `ceil(steps / num_images)` → epochs)
+> **AI-Toolkit parity, 8GB VRAM tuned, survives `git pull`.** This is [Luisacaotica/fizgig-chaotic](https://github.com/Luisacaotica/fizgig-chaotic) — a drop-in extension on top of vanilla Fizgig (forked from `shootthesound/Fizgig`).
+> - **Steps vs Epochs** — `Max Steps` toggle in **Chaotic card below Presets** (AI-Toolkit `train.steps` = `ceil(steps / num_images)` → epochs)
 > - **Control + Target** — paired training via `control_directory` → `latent_control` → `pack_control_latent` (`src/fizgig/training/trainer.py:998`, `src/fizgig/dataset/image_dataset.py:528`) — depth/pose/canny/edit for Klein Edit, Krea2, H3 video
-> - **Advanced Training card** — Optimizer (`adamw`/`adamw8bit`/`lion`/`prodigy`), LR Scheduler (`cosine`/`linear`/`rex`), Warmup, Grad Accum, Max Grad Norm, Save Every, Network Dropout, Caption Dropout — all synced to real entries before launch
+> - **Advanced Training card** — Optimizer (`adamw`/`adamw8bit`/`automagic3`), LR Scheduler (`cosine`/`linear`/`rex`), Warmup, Grad Accum, Max Grad Norm, Save Every, Network Dropout, Caption Dropout — all synced to real entries before launch
+> - **Krea2 Ostris Edit** — **Samples tab → Prompt & Dimensions** (English only, below Width/Height/Steps) — 3 refs `Picture N` + VAE latents `1MP t=0` + `kv_cache` (`index_timestep_zero`, `comfyui-krea2-ostris-edit/nodes.py:227`) for live edit testing
 > - **LoRA adapter** — Fizgig already trains LoRA + LoKR (`src/fizgig/networks/lora.py:23`), Chaotic surfaces `Network Type` + `Context LoRA` (= AI-Toolkit `control_lora`) + 4060 Ti 8GB tips
+> - **Automagic v1/v2/v3** — ported `toolkit/optimizers/automagic3.py` → `extensions/chaotic/optimizers/` + catalog patch (`src/fizgig/training/optimizers.py:39`)
+> - **Black & Orange theme** — `launch_chaotic.*` only, `COLORS` `bg_deep #0A0A0A` / `accent #FF6B00` (`extensions/chaotic/patch.py:43`)
 > - **Survives updates** — lives in `extensions/chaotic/` via `launch_chaotic.pyw` monkey-patch; `update_fizgig.bat` never overwrites
 >
-> Launch: `launch_chaotic.bat` (silent) or `run_chaotic_console.bat` (console logs) — vanilla still via `run_fizgig.bat`. Title shows `[CHAOTIC]`. See [`extensions/chaotic/README.md`](extensions/chaotic/README.md) for full mapping.
+> Launch: `launch_chaotic.bat` (silent, orange) or `run_chaotic_console.bat` (console logs) — vanilla still via `run_fizgig.bat`. Title shows `[CHAOTIC - ORANGE]`. See [`extensions/chaotic/README.md`](extensions/chaotic/README.md) for full mapping.
 
 > ### 📰 Latest news
 > - **Fizgig 4.3.1 — 12 GB cards confirmed training MiniMax H3** — a community field report on an RTX 5070 proved H3 LoRA training runs stable at 12 GB, and the two crashes in its way are fixed: checkpoint saves no longer die on low memory, and previews no longer fragment VRAM into a next-step OOM. Also in this maintenance release: **captioning no longer slows down your next training run** (it runs in its own process now — built by **[@scryptio](https://github.com/scryptio)**). [Release notes](docs/RELEASE_NOTES_v4.3.1.md)
