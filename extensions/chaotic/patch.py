@@ -63,11 +63,49 @@ CHAOTIC_COLORS = {
     "error": "#FF3B00",
 }
 
+def _patch_automagic_catalog():
+    try:
+        from fizgig.training import optimizers as opt_mod
+        # Inject automagic variants into catalog so available_optimizers() sees them
+        # Use None module check (always available) since we ship them
+        opt_mod._CATALOG["automagic"]  = (None, "Automagic v1 — polarity adaptive (experimental, ai-toolkit)")
+        opt_mod._CATALOG["automagic2"] = (None, "Automagic v2 — per-tensor adaptive (experimental)")
+        opt_mod._CATALOG["automagic3"] = (None, "Automagic v3 — polarity-history v3, fused, v3 pooled (experimental, recommended)")
+        # Also wire create_optimizer to handle these names directly (maps to our port)
+        _orig_create = opt_mod.create_optimizer
+        def _chaotic_create(name, params, lr, args_str="", eps_floor_8bit=False):
+            key = (name or "").strip().lower()
+            if key in ("automagic", "automagic2", "automagic3"):
+                mod_map = {
+                    "automagic": "extensions.chaotic.optimizers.automagic",
+                    "automagic2": "extensions.chaotic.optimizers.automagic2",
+                    "automagic3": "extensions.chaotic.optimizers.automagic3",
+                }
+                import importlib
+                cls_name = "Automagic" if key=="automagic" else "Automagic2" if key=="automagic2" else "Automagic3"
+                mod = importlib.import_module(mod_map[key])
+                cls = getattr(mod, cls_name)
+                kwargs = opt_mod.parse_optimizer_args(args_str)
+                # automagic3 defaults: lr is start lr, controller adapts
+                opt = cls(params, lr=lr, **kwargs)
+                label = f"{key}({args_str.strip()})" if args_str.strip() else key
+                print(f"[chaotic][optim] {label} — {opt_mod.describe(key)}")
+                return opt, label
+            return _orig_create(name, params, lr, args_str, eps_floor_8bit)
+        opt_mod.create_optimizer = _chaotic_create
+        print("[chaotic] automagic v1/v2/v3 injected into optimizer catalog")
+    except Exception as e:
+        print(f"[chaotic] automagic catalog patch failed: {e}")
+        import traceback; traceback.print_exc()
+
 def apply_chaotic_patches(GUIClass):
     # Apply Krea2 Ostris patch early (no UI)
     if 'apply_krea2_ostris_patch' in globals() and apply_krea2_ostris_patch:
         try: apply_krea2_ostris_patch()
         except Exception as e: print(f"[chaotic] krea2 ostris patch failed: {e}")
+    # Inject automagic optimizers
+    try: _patch_automagic_catalog()
+    except Exception as e: print(f"[chaotic] automagic inject failed: {e}")
     # Apply orange/black theme BEFORE any widget is created - patch the module COLORS dict
     try:
         import lora_trainer_gui as gui_mod
@@ -432,7 +470,7 @@ def _inject_chaotic_ui(self):
     row+=1
     # Optimizer
     ttk.Label(content, text="Optimizer:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
-    opt_combo = ttk.Combobox(content, values=["adamw","adamw8bit","lion","prodigy","adafactor","adamw8bit + prodigy"], width=22)
+    opt_combo = ttk.Combobox(content, values=["adamw","adamw8bit","lion","pagedadamw8bit","ademamix8bit","automagic","automagic2","automagic3"], width=22)
     # sync with real entry if exists
     real_opt = ""
     try: real_opt = self.entries.get('OPTIMIZER_TYPE').get() or "adamw8bit"
@@ -440,7 +478,7 @@ def _inject_chaotic_ui(self):
     opt_combo.set(real_opt)
     opt_combo.grid(row=row, column=1, sticky=tk.W, padx=5, pady=3)
     self.entries['CHAOTIC_OPTIMIZER'] = opt_combo
-    tk.Label(content, text="adamw8bit = 8GB safe", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=row, column=2, sticky=tk.W, padx=5)
+    tk.Label(content, text="automagic3 = adaptive LR v3 (fused, polarity-history)", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=row, column=2, sticky=tk.W, padx=5)
     row+=1
     # Scheduler
     ttk.Label(content, text="LR Scheduler:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
