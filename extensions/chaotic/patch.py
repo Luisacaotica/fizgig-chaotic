@@ -193,16 +193,20 @@ def _inject_chaotic_ui(self):
     print(f"[chaotic] outer found: {outer}")
 
     # --- Create Chaotic Advanced Section as CollapsibleFrame ---
+    # User wants it BELOW Presets and ABOVE Output (not after Training)
     try:
         chaotic_section = CollapsibleFrame(outer, "Chaotic — Advanced Training (AI-Toolkit parity)  ✦  Steps · Control · Optimizer · Scheduler", default_expanded=True)
-        chaotic_section.pack(fill=tk.X, padx=36, pady=(0, 16))
-        # move it right after training section if possible
-        try:
-            chaotic_section.pack_forget()
-            # pack after training sec: easiest is pack chaotic then re-pack sections that were after it?
-            # simpler: just pack at end and lift training sec? Leave as is - will appear after training.
+        output_sec = getattr(self, 'collapsible_sections', {}).get('output')
+        if output_sec is not None and str(output_sec.winfo_manager()) == "pack":
+            try:
+                chaotic_section.pack(fill=tk.X, padx=36, pady=(0, 16), before=output_sec)
+                print(f"[chaotic] packed before output_section (below Presets, above Output)")
+            except Exception as e:
+                print(f"[chaotic] before-pack failed ({e}), fallback to simple pack")
+                chaotic_section.pack(fill=tk.X, padx=36, pady=(0, 16))
+        else:
             chaotic_section.pack(fill=tk.X, padx=36, pady=(0, 16))
-        except: pass
+            print(f"[chaotic] no output_sec to anchor, packed at end")
         content = chaotic_section.get_content_frame()
         content.columnconfigure(1, weight=1)
         self._chaotic_section = chaotic_section
