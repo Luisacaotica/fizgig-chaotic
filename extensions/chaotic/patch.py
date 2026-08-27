@@ -12,6 +12,14 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog
 
+# Ostris edit port (krea2)
+try:
+    from extensions.chaotic.krea2_ostris_edit import apply_krea2_ostris_patch
+except Exception:
+    try:
+        from fizgig.extensions.chaotic.krea2_ostris_edit import apply_krea2_ostris_patch  # alt
+    except: apply_krea2_ostris_patch = None
+
 
 COLORS = None  # will import from gui module
 
@@ -56,6 +64,10 @@ CHAOTIC_COLORS = {
 }
 
 def apply_chaotic_patches(GUIClass):
+    # Apply Krea2 Ostris patch early (no UI)
+    if 'apply_krea2_ostris_patch' in globals() and apply_krea2_ostris_patch:
+        try: apply_krea2_ostris_patch()
+        except Exception as e: print(f"[chaotic] krea2 ostris patch failed: {e}")
     # Apply orange/black theme BEFORE any widget is created - patch the module COLORS dict
     try:
         import lora_trainer_gui as gui_mod
@@ -405,6 +417,39 @@ def _inject_chaotic_ui(self):
         self._chaotic_control_dir_var.trace_add("write", lambda *_: _update_pairing_label())
     except: pass
     _update_pairing_label()
+    row+=1
+    ttk.Separator(content, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
+    row+=1
+
+    # --- Krea2 Ostris Edit (VAE ref_latents + Picture N + kv_cache) ---
+    tk.Label(content, text="Krea2 Ostris Edit — Picture N + VAE refs + kv_cache", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,2))
+    row+=1
+    tk.Label(content, text="Qwen3-VL vision (384px) + VAE latent (1MP, snap 16, t=0) = Ostris edit. VAE conectado -> refs viram tokens em t=0, kv_cache = precompute K/V (LoRA treinada com kv_cache).", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0,4))
+    row+=1
+    self._chaotic_krea2_images = []
+    self._chaotic_kv_cache = tk.BooleanVar(value=False)
+    for idx in range(3):
+        fr = ttk.Frame(content)
+        fr.grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(fr, text=f"Image {idx+1}:").pack(side=tk.LEFT, padx=(0,4))
+        var = tk.StringVar(value="")
+        ent = ttk.Entry(fr, textvariable=var, width=38)
+        ent.pack(side=tk.LEFT)
+        self._chaotic_krea2_images.append(var)
+        self.entries[f'CHAOTIC_KREA2_IMG{idx+1}'] = ent
+        def _mk_browse(v=var):
+            def _b():
+                p = filedialog.askopenfilename(title=f"Select reference image {idx+1}", filetypes=[("Images","*.png *.jpg *.jpeg *.webp"),("All","*.*")])
+                if p: v.set(p)
+            return _b
+        ttk.Button(fr, text="Browse", command=_mk_browse()).pack(side=tk.LEFT, padx=(4,0))
+        ttk.Button(fr, text="Clear", command=lambda v=var: v.set("")).pack(side=tk.LEFT, padx=(2,0))
+        row+=1
+    kv_fr = ttk.Frame(content)
+    kv_fr.grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
+    ttk.Checkbutton(kv_fr, text="kv_cache (LoRA treinada com model_kwargs.kv_cache=true -> K/V cacheado, mais rapido)", variable=self._chaotic_kv_cache).pack(side=tk.LEFT)
+    self.entries['CHAOTIC_KV_CACHE'] = self._chaotic_kv_cache
+    tk.Label(kv_fr, text="off = normal edit", font=("Segoe UI", 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(8,0))
     row+=1
     ttk.Separator(content, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
     row+=1
