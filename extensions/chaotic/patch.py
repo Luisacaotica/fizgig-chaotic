@@ -1,4 +1,4 @@
-"""Chaotic patch — applied at startup by launch_chaotic.pyw.
+﻿"""Chaotic patch — applied at startup by launch_chaotic.pyw.
 
 Adds:
 - Steps vs Epochs toggle (AI-Toolkit parity)
@@ -32,10 +32,58 @@ def _epochs_from_steps(steps: int, steps_per_epoch: int) -> int:
         return max(1, steps)
     return max(1, (steps + steps_per_epoch - 1) // steps_per_epoch)
 
+CHAOTIC_COLORS = {
+    "bg_deep": "#0A0A0A",
+    "bg_surface": "#1A1A1A",
+    "bg_hover": "#2A1D0F",
+    "bg_header": "#111111",
+    "text_primary": "#FFF2E6",
+    "text_secondary": "#FFB266",
+    "text_explain": "#FFD9B3",
+    "text_muted": "#8A6B4A",
+    "accent": "#FF6B00",
+    "accent_hover": "#FF8533",
+    "accent_subtle": "#331A00",
+    "queue_blue": "#FF8C1A",
+    "queue_blue_hover": "#FFB366",
+    "border": "#3A2410",
+    "border_focus": "#FF6B00",
+    "scrollbar_thumb": "#FF6B00",
+    "scrollbar_thumb_hover": "#FF8533",
+    "success": "#FF6B00",
+    "warning": "#FF8C1A",
+    "error": "#FF3B00",
+}
+
 def apply_chaotic_patches(GUIClass):
+    # Apply orange/black theme BEFORE any widget is created - patch the module COLORS dict
+    try:
+        import lora_trainer_gui as gui_mod
+        # Update dict in place so every reference sees orange
+        for k, v in CHAOTIC_COLORS.items():
+            if k in gui_mod.COLORS:
+                gui_mod.COLORS[k] = v
+        # Also keep module globals in sync (BG_COLOR etc alias COLORS values at import time)
+        try:
+            gui_mod.BG_COLOR = gui_mod.COLORS["bg_deep"]
+            gui_mod.FG_COLOR = gui_mod.COLORS["text_primary"]
+            gui_mod.ACCENT_COLOR = gui_mod.COLORS["accent"]
+            gui_mod.ENTRY_BG = gui_mod.COLORS["bg_surface"]
+            gui_mod.BUTTON_ACTIVE = gui_mod.COLORS["bg_hover"]
+            gui_mod.BORDER_COLOR = gui_mod.COLORS["border"]
+        except: pass
+        print("[chaotic] orange/black theme applied")
+    except Exception as e:
+        print(f"[chaotic] theme patch failed: {e}")
+
     orig_init = GUIClass.__init__
     def chaotic_init(self, *args, **kwargs):
         orig_init(self, *args, **kwargs)
+        # ttk style orange after widgets exist
+        try:
+            _apply_orange_ttk_style(self)
+        except Exception as e:
+            print(f"[chaotic] ttk style failed: {e}")
         try:
             _inject_chaotic_ui(self)
         except Exception as e:
@@ -158,9 +206,43 @@ def _sync_chaotic_to_real(self):
                     except: pass
             except: pass
 
+def _apply_orange_ttk_style(self):
+    try:
+        style = ttk.Style()
+        # use clam as base for color control
+        try: style.theme_use("clam")
+        except: pass
+        # TButton orange
+        style.configure("TButton", background="#1A1A1A", foreground="#FFF2E6", bordercolor="#FF6B00")
+        style.map("TButton", background=[("active","#FF6B00"), ("pressed","#CC5500")], foreground=[("active","#FFFFFF")])
+        style.configure("TCheckbutton", background="#1A1A1A", foreground="#FFF2E6")
+        style.map("TCheckbutton", background=[("active","#1A1A1A")])
+        style.configure("TCombobox", fieldbackground="#1A1A1A", background="#1A1A1A", foreground="#FFF2E6", arrowcolor="#FF6B00")
+        style.configure("TEntry", fieldbackground="#1A1A1A", foreground="#FFF2E6")
+        style.configure("TFrame", background="#0A0A0A")
+        style.configure("TLabel", background="#1A1A1A", foreground="#FFF2E6")
+        # Notebook tabs orange when selected
+        style.configure("TNotebook", background="#0A0A0A", bordercolor="#FF6B00")
+        style.map("TNotebook.Tab", background=[("selected","#FF6B00"), ("!selected","#1A1A1A")], foreground=[("selected","#FFFFFF"), ("!selected","#FFB266")])
+        # Progressbar
+        style.configure("Horizontal.TProgressbar", background="#FF6B00", troughcolor="#1A1A1A", bordercolor="#FF6B00")
+    except Exception as e:
+        print(f"[chaotic] ttk detail failed: {e}")
+    # force root bg
+    try:
+        self.master.configure(bg="#0A0A0A")
+        # ttk style for scrollbar thumb already via COLORS
+    except: pass
+
 def _inject_chaotic_ui(self):
     try:
-        self.master.title(self.master.title() + " [CHAOTIC]")
+        # title already has [CHAOTIC] from launcher, ensure orange indicator
+        t = self.master.title()
+        if "[CHAOTIC" not in t:
+            self.master.title(t + " [CHAOTIC - ORANGE]")
+        # also set icon background via root option
+        try: self.master.configure(bg="#0A0A0A")
+        except: pass
     except: pass
     print("[chaotic] injecting UI...")
     # import COLORS and CollapsibleFrame from gui module
@@ -223,7 +305,7 @@ def _inject_chaotic_ui(self):
     row+=1
 
     # --- Steps vs Epochs ---
-    tk.Label(content, text="Training length:", font=("Segoe UI", 10, "bold"), fg="#FF7EDB", bg=COLORS["bg_surface"]).grid(row=row, column=0, sticky=tk.W, padx=5, pady=(6,2))
+    tk.Label(content, text="Training length:", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, sticky=tk.W, padx=5, pady=(6,2))
     row+=1
     self._chaotic_steps_mode = tk.BooleanVar(value=False)
     try:
@@ -277,7 +359,7 @@ def _inject_chaotic_ui(self):
     row+=1
 
     # --- Control + Target ---
-    tk.Label(content, text="Control + Target (paired training — depth/pose/canny/edit)", font=("Segoe UI", 10, "bold"), fg="#FF7EDB", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,2))
+    tk.Label(content, text="Control + Target (paired training — depth/pose/canny/edit)", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,2))
     row+=1
     tk.Label(content, text="Target = Dataset folder (Start tab). Control = condicionamento. Mesmo nome de arquivo nas duas pastas = par.", font=("Segoe UI", 9), fg=COLORS["text_explain"], bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0,4))
     row+=1
@@ -328,7 +410,7 @@ def _inject_chaotic_ui(self):
     row+=1
 
     # --- Optimizer / Scheduler / Saves / VRAM ---
-    tk.Label(content, text="Optimizer & Scheduler (AI-Toolkit: optimizer, lr_scheduler)", font=("Segoe UI", 10, "bold"), fg="#FF7EDB", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,4))
+    tk.Label(content, text="Optimizer & Scheduler (AI-Toolkit: optimizer, lr_scheduler)", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,4))
     row+=1
     # Optimizer
     ttk.Label(content, text="Optimizer:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
@@ -433,3 +515,4 @@ def _on_steps_toggle(self):
         with open(pref_path, 'w', encoding='utf-8') as f:
             _json.dump({"steps_mode": on}, f)
     except: pass
+
