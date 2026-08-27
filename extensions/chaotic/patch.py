@@ -686,17 +686,10 @@ def _inject_chaotic_start_ui(self):
         FONT_FAMILY = "Segoe UI"
     # Locate Start tab outer via image_folder_var entry
     outer = None
+    training_card = None
     try:
-        if "CHAOTIC_CONTROL_DIR" in self.entries:
-            # already created hidden entry, find its master chain for outer? fallback to image_folder entry
-            ent = self.entries.get("MAX_TRAIN_EPOCHS")
-            if ent is not None:
-                outer = ent.master.master.master if ent.master else None
-        # Better: via image_folder_var
         if hasattr(self, 'image_folder_var'):
-            # Find widget that displays image_folder_var - the Entry
             for w in self.master.winfo_children():
-                # search recursively for Entry with textvariable == image_folder_var
                 def _find_entry(widget):
                     for child in widget.winfo_children():
                         try:
@@ -708,21 +701,19 @@ def _inject_chaotic_start_ui(self):
                     return None
                 ent = _find_entry(w)
                 if ent is not None:
-                    # ent -> row -> card -> outer
                     try:
-                        outer = ent.master.master.master
+                        training_card = ent.master.master  # card
+                        outer = training_card.master  # outer
                         break
                     except: pass
-        # Fallback: use any collapsible_sections outer
         if outer is None and hasattr(self, 'collapsible_sections'):
             sec = self.collapsible_sections.get("training")
             if sec: outer = sec.master
     except: pass
     if outer is None:
-        # Last fallback: use master
         outer = self.master
         print("[chaotic] start outer fallback to master")
-    print(f"[chaotic] start outer found: {outer}")
+    print(f"[chaotic] start outer found: {outer}, training_card: {training_card}")
     try:
         # Use _start_section_card if available
         card = None
@@ -733,35 +724,47 @@ def _inject_chaotic_start_ui(self):
             card.pack(fill=tk.X, padx=36, pady=(0,16))
             tk.Label(card, text="Optional — Control & Regularization", font=(FONT_FAMILY, 12, "bold"), fg=COLORS.get("text_primary","#FFF2E6"), bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=12, pady=8)
         card.grid_columnconfigure(1, weight=1)
-        # Move card to be above Post-Training Tools (below Training image folder)
+        # Move card to be directly after Training image folder (above Post-Training Tools) - use training_card from entry (most reliable)
         try:
-            # Find Training image folder card and Post-Training Tools card by searching for their titles
-            def _contains_text(widget, text):
-                for c in widget.winfo_children():
-                    try:
-                        if isinstance(c, tk.Label) and text in str(c.cget("text")):
+            # training_card already set via image_folder_var entry in outer finding above; if not, fallback to label search
+            if 'training_card' not in locals() or training_card is None:
+                def _contains_text(widget, text):
+                    for c in widget.winfo_children():
+                        try:
+                            if isinstance(c, tk.Label) and text in str(c.cget("text")):
+                                return True
+                        except: pass
+                        if _contains_text(c, text):
                             return True
-                    except: pass
-                    if _contains_text(c, text):
-                        return True
-                return False
-            training_card = None
-            post_card = None
-            for ch in outer.winfo_children():
-                if _contains_text(ch, "Training image folder"):
-                    training_card = ch
-                if _contains_text(ch, "Post-Training Tools"):
-                    post_card = ch
-            # Prefer packing after Training image folder (more reliable than before Post)
-            target_after = training_card if training_card is not None else None
-            if target_after is not None and target_after != card:
+                    return False
+                for ch in outer.winfo_children():
+                    if _contains_text(ch, "Training image folder"):
+                        training_card = ch
+                        break
+            if training_card is not None and training_card != card:
                 card.pack_forget()
-                card.pack(fill=tk.X, padx=36, pady=(0,16), after=target_after)
-                print(f"[chaotic] Start card reordered after Training image folder (above Post-Training)")
-            elif post_card is not None and post_card != card:
-                card.pack_forget()
-                card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
-                print(f"[chaotic] Start card reordered before Post-Training Tools (fallback)")
+                card.pack(fill=tk.X, padx=36, pady=(0,16), after=training_card)
+                print(f"[chaotic] Start card reordered after Training image folder (above Post-Training) - entry anchor")
+            else:
+                # Fallback: find Post-Training Tools
+                def _contains_text2(widget, text):
+                    for c in widget.winfo_children():
+                        try:
+                            if isinstance(c, tk.Label) and text in str(c.cget("text")):
+                                return True
+                        except: pass
+                        if _contains_text2(c, text):
+                            return True
+                    return False
+                post_card = None
+                for ch in outer.winfo_children():
+                    if _contains_text2(ch, "Post-Training Tools"):
+                        post_card = ch
+                        break
+                if post_card is not None and post_card != card:
+                    card.pack_forget()
+                    card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
+                    print(f"[chaotic] Start card reordered before Post-Training Tools (fallback)")
         except Exception as e:
             print(f"[chaotic] start reorder failed: {e}")
             import traceback; traceback.print_exc()
