@@ -22,17 +22,23 @@ def _report(title, message, detail=""):
             sys.stderr.write(f"{title}\n{body}\n{detail}\n")
     sys.exit(1)
 
-# re-launch in venv pythonw if needed (keep console hidden)
-if os.path.exists(VENV_PYTHONW) and os.path.normcase(sys.executable) != os.path.normcase(VENV_PYTHONW):
-    # if launched from python.exe (console), keep console: use python.exe
-    # detect if current exe is pythonw (no console) vs python
-    is_console = sys.executable.lower().endswith("python.exe")
-    target = VENV_PYTHON if is_console else VENV_PYTHONW
+# re-launch in venv if not already inside it (keep console for python.exe)
+try:
+    venv_dir = os.path.join(HERE, "venv")
+    is_in_venv = False
     try:
-        subprocess.Popen([target, os.path.abspath(__file__)])
-    except Exception as exc:
-        _report("Fizgig Chaotic could not start", f"The bundled Python failed to launch:\n{target}\n\nRe-run install_fizgig.bat.", f"{type(exc).__name__}: {exc}")
-    sys.exit(0)
+        is_in_venv = os.path.commonpath([os.path.abspath(sys.executable), os.path.abspath(venv_dir)]) == os.path.abspath(venv_dir)
+    except: 
+        is_in_venv = "venv" in sys.executable.lower() and "fizgig" in sys.executable.lower()
+    if not is_in_venv and os.path.exists(VENV_PYTHONW):
+        is_console = sys.executable.lower().endswith("python.exe")
+        target = VENV_PYTHON if is_console else VENV_PYTHONW
+        try:
+            subprocess.Popen([target, os.path.abspath(__file__)])
+        except Exception as exc:
+            _report("Fizgig Chaotic could not start", f"The bundled Python failed to launch:\n{target}\n\nRe-run install_fizgig.bat.", f"{type(exc).__name__}: {exc}")
+        sys.exit(0)
+except: pass
 
 try:
     import tkinter as tk
