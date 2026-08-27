@@ -173,6 +173,11 @@ def apply_chaotic_patches(GUIClass):
             _patch_slider_validation(self)
         except Exception as e:
             print(f"[chaotic] slider validation patch failed: {e}")
+        # Full Ostris-style reorg (option 2) — hide old 1-5 and create single Chaotic tab
+        try:
+            _inject_chaotic_full_tab(self)
+        except Exception as e:
+            print(f"[chaotic] full tab failed: {e}")
     GUIClass.__init__ = chaotic_init
 
     # Patch start_training for steps->epochs and control_directory
@@ -890,6 +895,128 @@ def _inject_chaotic_start_ui(self):
         print("[chaotic] Start tab Control & Regularization card injected")
     except Exception as e:
         print(f"[chaotic] start card failed: {e}")
+        import traceback; traceback.print_exc()
+
+def _inject_chaotic_full_tab(self):
+    # Full replace: hide vanilla 1-5 tabs and create single Chaotic tab with Data/Training/Modify/Options
+    try:
+        import lora_trainer_gui as gui_mod
+        COLORS = gui_mod.COLORS
+        FONT_FAMILY = gui_mod.FONT_FAMILY
+    except:
+        COLORS = {"bg_deep":"#0A0A0A","bg_surface":"#1A1A1A","text_primary":"#FFF2E6","text_secondary":"#FFB266","border":"#3A2410"}
+        FONT_FAMILY = "Segoe UI"
+    try:
+        # Create new tab
+        chaotic_tab = ttk.Frame(self.notebook)
+        # Insert as first tab
+        try:
+            self.notebook.insert(0, chaotic_tab, text="✦ Chaotic")
+        except:
+            self.notebook.add(chaotic_tab, text="✦ Chaotic")
+        self.chaotic_tab = chaotic_tab
+        # Hide old 1,3,4,5 tabs (keep 2. Image Prep visible for face-crop controls, plus post-training tools)
+        for attr in ["start_tab","caption_gen_tab","samples_tab","training_tab"]:
+            tab = getattr(self, attr, None)
+            if tab is not None:
+                try:
+                    self.notebook.hide(tab)
+                except:
+                    try: self.notebook.forget(tab)
+                    except: pass
+        print("[chaotic] old tabs hidden (Start/Captions/Samples/Training), Chaotic tab created (Image Prep kept)")
+        # Scrollable outer
+        scrollable, _canvas = self.create_scrollable_frame(chaotic_tab)
+        outer = tk.Frame(scrollable, bg=COLORS["bg_deep"])
+        outer.pack(fill=tk.BOTH, expand=True)
+        # Banner
+        self._add_tab_banner(outer, "Chaotic — Training Studio (Ostris-style)", "Data • Training • Modify • Options — all in one place. Values sync with vanilla fields, so training just works. Orange = Chaotic.")
+        # Data card
+        data_card = self._start_section_card(outer, "Data — Dataset & Control & Regularization", "Main dataset folder + optional Control (paired) + Regularization. Image Prep (resize/face-crop) will process all enabled folders together.")
+        # Reuse existing Start tab's optional card logic: move its widgets into this card
+        # Instead of duplicating, we just reparent the existing Optional card if it exists
+        # Find the Optional card we already injected in Start tab (has title Optional — Control & Regularization)
+        try:
+            # Find the card we created earlier in Start tab (has _chaotic_enable_control)
+            # It is already a child of Start outer, but we can create a new one here that shares same vars
+            # For Data, create fresh UI that shares same StringVars
+            data_card.grid_columnconfigure(1, weight=1)
+            r = 0
+            # Dataset folder row (reuse image_folder_var)
+            tk.Label(data_card, text="Dataset folder:", font=(FONT_FAMILY, 10), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).grid(row=r, column=0, sticky=tk.W, padx=5, pady=4)
+            ds_frame = tk.Frame(data_card, bg=COLORS["bg_surface"])
+            ds_frame.grid(row=r, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=4)
+            ttk.Entry(ds_frame, textvariable=self.image_folder_var, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Button(ds_frame, text="Browse", command=lambda: self.browse_directory("image_folder") if hasattr(self, 'browse_directory') else filedialog.askdirectory()).pack(side=tk.LEFT, padx=(4,0))
+            r+=1
+            # Control row (share vars)
+            if not hasattr(self, '_chaotic_enable_control'):
+                self._chaotic_enable_control = tk.BooleanVar(value=False)
+            if not hasattr(self, '_chaotic_control_dir_var'):
+                self._chaotic_control_dir_var = tk.StringVar(value="")
+            ctrl_fr = tk.Frame(data_card, bg=COLORS["bg_surface"])
+            ctrl_fr.grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
+            ttk.Checkbutton(ctrl_fr, text="Enable Control", variable=self._chaotic_enable_control).pack(side=tk.LEFT)
+            tk.Label(ctrl_fr, text="Control folder:", font=(FONT_FAMILY, 9), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(12,4))
+            ttk.Entry(ctrl_fr, textvariable=self._chaotic_control_dir_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4,0))
+            ttk.Button(ctrl_fr, text="Browse", command=lambda: self._chaotic_control_dir_var.set(filedialog.askdirectory() or self._chaotic_control_dir_var.get())).pack(side=tk.LEFT, padx=(4,0))
+            r+=1
+            # Reg row
+            if not hasattr(self, '_chaotic_enable_reg'):
+                self._chaotic_enable_reg = tk.BooleanVar(value=False)
+            if not hasattr(self, '_chaotic_reg_dir_var'):
+                self._chaotic_reg_dir_var = tk.StringVar(value="")
+            reg_fr = tk.Frame(data_card, bg=COLORS["bg_surface"])
+            reg_fr.grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
+            ttk.Checkbutton(reg_fr, text="Enable Regularization", variable=self._chaotic_enable_reg).pack(side=tk.LEFT)
+            tk.Label(reg_fr, text="Reg folder:", font=(FONT_FAMILY, 9), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(12,4))
+            ttk.Entry(reg_fr, textvariable=self._chaotic_reg_dir_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4,0))
+            ttk.Button(reg_fr, text="Browse", command=lambda: self._chaotic_reg_dir_var.set(filedialog.askdirectory() or self._chaotic_reg_dir_var.get())).pack(side=tk.LEFT, padx=(4,0))
+            r+=1
+            # Slider toggle
+            if not hasattr(self, '_chaotic_slider_mode'):
+                self._chaotic_slider_mode = tk.BooleanVar(value=False)
+            ttk.Checkbutton(data_card, text="Slider LoRA (no data needed)", variable=self._chaotic_slider_mode).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
+            r+=1
+            tk.Label(data_card, text="Control needs same basenames as target; Reg is extra images to prevent overfitting. Slider allows empty dataset.", font=(FONT_FAMILY, 8, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
+        except Exception as e:
+            print(f"[chaotic] Data card failed: {e}")
+
+        # Training card
+        train_card = self._start_section_card(outer, "Training — Steps, Optimizer, Scheduler", "Steps vs Epochs (AI-Toolkit), optimizer/scheduler, saves. Chaotic values override collapsed sections.")
+        try:
+            train_card.grid_columnconfigure(1, weight=1)
+            # Steps row is already in Chaotic Advanced card, but we add a compact version here
+            tk.Label(train_card, text="Steps mode is in Training Parameters card (below Presets) — use Max Steps there.", font=(FONT_FAMILY, 8, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=5, pady=4)
+            # Show current optimizer/scheduler values
+            tk.Label(train_card, text=f"Optimizer: {self.entries.get('OPTIMIZER_TYPE').get() if 'OPTIMIZER_TYPE' in self.entries else 'adamw8bit'}  •  Scheduler: {self.entries.get('LR_SCHEDULER').get() if 'LR_SCHEDULER' in self.entries else 'constant'}", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=5, pady=2)
+            ttk.Button(train_card, text="Open Training Details", command=lambda: (self.notebook.add(self.training_tab, text="5. Training") if str(self.training_tab) not in str(self.notebook.tabs()) else None, self.notebook.select(self.training_tab))).pack(anchor=tk.W, padx=5, pady=4)
+        except: pass
+
+        # Modify card
+        mod_card = self._start_section_card(outer, "Modify — LoRA & Adapters", "Rank, alpha, network type (LoRA/LoKR), context LoRA.")
+        try:
+            mod_card.grid_columnconfigure(1, weight=1)
+            # Reuse existing Training Parameters fields by reparenting? For now show summary
+            tk.Label(mod_card, text=f"Network: {self.entries.get('NETWORK_TYPE').get() if 'NETWORK_TYPE' in self.entries else 'LoRA'}  •  Dim: {self.entries.get('NETWORK_DIM').get() if 'NETWORK_DIM' in self.entries else '8'}", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=5, pady=4)
+            tk.Label(mod_card, text="Modify settings are in Training Parameters card — edit there, they sync here.", font=(FONT_FAMILY, 8, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=5, pady=2)
+        except: pass
+
+        # Options card
+        opt_card = self._start_section_card(outer, "Options — VRAM, Samples, Seeds", "Target MP, blocks swap, seed, sample toggle. Samples Krea2 edit is in Samples tab's Prompt & Dimensions.")
+        try:
+            opt_card.grid_columnconfigure(1, weight=1)
+            tk.Label(opt_card, text="Options are in their original tabs (Samples, Training) — Chaotic tab shows summary.", font=(FONT_FAMILY, 8, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=5, pady=4)
+            # Start training button
+            ttk.Button(opt_card, text="▶ Start Training (Chaotic)", command=self.start_training).pack(anchor=tk.W, padx=5, pady=8)
+        except: pass
+
+        # Select Chaotic tab
+        try: self.notebook.select(chaotic_tab)
+        except: pass
+        print("[chaotic] Full Chaotic tab created (Data/Training/Modify/Options) and old tabs hidden")
+    except Exception as e:
+        print(f"[chaotic] full tab failed: {e}")
         import traceback; traceback.print_exc()
 
 def _on_steps_toggle(self):
