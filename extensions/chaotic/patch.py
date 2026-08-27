@@ -733,6 +733,39 @@ def _inject_chaotic_start_ui(self):
             card.pack(fill=tk.X, padx=36, pady=(0,16))
             tk.Label(card, text="Optional — Control & Regularization", font=(FONT_FAMILY, 12, "bold"), fg=COLORS.get("text_primary","#FFF2E6"), bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=12, pady=8)
         card.grid_columnconfigure(1, weight=1)
+        # Move card to be above Post-Training Tools (below Training image folder)
+        try:
+            post_card = None
+            for ch in outer.winfo_children():
+                # check if this child is the Post-Training Tools card
+                try:
+                    # _start_section_card creates a Frame with highlight and containing labels
+                    # Search recursively for label with "Post-Training Tools"
+                    def _has_post(w):
+                        for c in w.winfo_children():
+                            try:
+                                if isinstance(c, tk.Label) and "Post-Training Tools" in str(c.cget("text")):
+                                    return w
+                                # also check nested
+                                res = _has_post(c)
+                                if res: return res
+                            except: pass
+                        return None
+                    found = _has_post(ch)
+                    if found:
+                        post_card = found
+                        # found is the card itself (Frame with highlight)
+                        # But _has_post returns the card, which is ch
+                        # In some cases card is ch itself
+                        if post_card != card:
+                            break
+                except: pass
+            if post_card is not None and post_card != card:
+                card.pack_forget()
+                card.pack(fill=tk.X, padx=36, pady=(0,16), before=post_card)
+                print(f"[chaotic] Start card reordered before Post-Training Tools")
+        except Exception as e:
+            print(f"[chaotic] start reorder failed: {e}")
         # Enable Control
         if not hasattr(self, '_chaotic_enable_control'):
             self._chaotic_enable_control = tk.BooleanVar(value=bool(getattr(self, '_chaotic_control_dir_var', tk.StringVar()).get() if hasattr(self, '_chaotic_control_dir_var') else False))
@@ -744,15 +777,15 @@ def _inject_chaotic_start_ui(self):
         r0.pack(fill=tk.X, padx=5, pady=4)
         ttk.Checkbutton(r0, text="Enable Control (paired edit) — depth/pose/canny/edit", variable=self._chaotic_enable_control).pack(side=tk.LEFT)
         tk.Label(r0, text="Control folder:", font=(FONT_FAMILY, 9), fg=COLORS.get("text_muted","#8A6B4A"), bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(12,4))
-        # Ensure entry exists
+        # Ensure entry exists - make it expand to fill row (fix misalignment)
         if 'CHAOTIC_CONTROL_DIR' not in self.entries or not isinstance(self.entries['CHAOTIC_CONTROL_DIR'], tk.Widget):
-            ent = ttk.Entry(r0, textvariable=self._chaotic_control_dir_var, width=32)
-            ent.pack(side=tk.LEFT)
+            ent = ttk.Entry(r0, textvariable=self._chaotic_control_dir_var, width=28)
+            ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4,0))
             self.entries['CHAOTIC_CONTROL_DIR'] = ent
         else:
             # Reparent: create visible entry in this row
-            ent = ttk.Entry(r0, textvariable=self._chaotic_control_dir_var, width=32)
-            ent.pack(side=tk.LEFT)
+            ent = ttk.Entry(r0, textvariable=self._chaotic_control_dir_var, width=28)
+            ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4,0))
             self.entries['CHAOTIC_CONTROL_DIR_VISIBLE'] = ent
         def _browse_ctrl2():
             d = filedialog.askdirectory(title="Select CONTROL folder (paired to Dataset)")
@@ -775,8 +808,8 @@ def _inject_chaotic_start_ui(self):
         r1.pack(fill=tk.X, padx=5, pady=4)
         ttk.Checkbutton(r1, text="Enable Regularization — extra images to preserve prior (video+image)", variable=self._chaotic_enable_reg).pack(side=tk.LEFT)
         tk.Label(r1, text="Reg folder:", font=(FONT_FAMILY, 9), fg=COLORS.get("text_muted","#8A6B4A"), bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(12,4))
-        reg_ent = ttk.Entry(r1, textvariable=self._chaotic_reg_dir_var, width=32)
-        reg_ent.pack(side=tk.LEFT)
+        reg_ent = ttk.Entry(r1, textvariable=self._chaotic_reg_dir_var, width=28)
+        reg_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4,0))
         self.entries['CHAOTIC_REG_DIR'] = reg_ent
         def _browse_reg():
             d = filedialog.askdirectory(title="Select REGULARIZATION folder")
@@ -986,6 +1019,21 @@ def _patch_sample_default(self):
                         _json.dump(pj, f)
                 except: pass
                 print("[chaotic] sample generation default unchecked")
+                # Force grey visual on start (was only grey after enable/disable toggle)
+                try:
+                    if hasattr(self, 'toggle_sample_settings'):
+                        self.toggle_sample_settings()
+                    elif hasattr(self, '_on_sample_enabled_toggle'):
+                        self._on_sample_enabled_toggle()
+                    # Also try generic update
+                    if hasattr(self, 'sample_settings_frame'):
+                        # If toggle didn't grey, manually set state
+                        try:
+                            # The sample_settings_frame contains the cards; when disabled it should look grey
+                            # Force update by calling the toggle again after a short delay
+                            self.master.after(100, lambda: getattr(self, 'toggle_sample_settings', lambda: None)())
+                        except: pass
+                except: pass
             # Also hook to persist future toggles
             try:
                 self.sample_enabled_var.trace_add("write", lambda *_: _persist_sample_enabled(self))
@@ -1190,6 +1238,40 @@ def _patch_optimizer_tooltips(self):
                 "paged*: same as base but pages to CPU under pressure"
             )
             ToolTip(ent, tip)
+            # Also add visible selectable text below to be easy to copy-paste (user request)
+            try:
+                parent = ent.master
+                COLORS = gui_mod.COLORS
+                # Find max row to avoid overlapping existing widgets
+                max_r = 0
+                for ch in parent.winfo_children():
+                    try:
+                        inf = ch.grid_info()
+                        if inf: max_r = max(max_r, int(inf.get('row', 0)))
+                    except: pass
+                r = max_r + 1
+                frame = tk.Frame(parent, bg=COLORS.get("bg_surface","#1A1A1A"))
+                frame.grid(row=r, column=0, columnspan=4, sticky=tk.EW, padx=5, pady=(4,8))
+                frame.columnconfigure(0, weight=1)
+                txt = tk.Text(frame, height=6, wrap=tk.WORD, bg=COLORS.get("bg_surface","#1A1A1A"), fg=COLORS.get("text_muted","#8A6B4A"), font=("Consolas", 8), relief=tk.FLAT, highlightthickness=1, highlightbackground=COLORS.get("border","#3A2410"), bd=0, padx=6, pady=4)
+                txt.insert("1.0", tip)
+                # Make read-only but selectable
+                txt.bind("<Key>", lambda e: "break")
+                txt.configure(state="normal")
+                # Allow selection, prevent edit via bind
+                txt.grid(row=0, column=0, sticky=tk.EW, padx=(0,4))
+                frame.grid_columnconfigure(0, weight=1)
+                def _copy_tip():
+                    try:
+                        parent.clipboard_clear()
+                        parent.clipboard_append(tip)
+                    except: pass
+                btn = ttk.Button(frame, text="Copy", width=6, command=_copy_tip)
+                btn.grid(row=0, column=1, sticky=tk.N)
+                self._chaotic_opt_tip_text = txt
+                self._chaotic_opt_tip_frame = frame
+            except Exception as e:
+                print(f"[chaotic] opt tip label failed: {e}")
         # Scheduler tooltips
         if "LR_SCHEDULER" in self.entries:
             ent = self.entries["LR_SCHEDULER"]
