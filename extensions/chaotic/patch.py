@@ -460,7 +460,7 @@ def _inject_chaotic_ui(self):
     row+=1
 
     # Krea2 Ostris moved to Samples tab for live edit testing
-    tk.Label(content, text="Krea2 Ostris Edit movido → aba Samples (para testar edit ao vivo)", font=("Segoe UI", 9, "italic"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
+    tk.Label(content, text="Krea2 Ostris Edit moved → Samples tab (for live edit testing)", font=("Segoe UI", 9, "italic"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=row, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
     row+=1
     ttk.Separator(content, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", padx=5, pady=8)
     row+=1
@@ -564,56 +564,51 @@ def _inject_chaotic_ui(self):
         import traceback; traceback.print_exc()
 
 def _inject_chaotic_samples_ui(self):
-    # Samples tab - Krea2 Ostris Edit for live testing
+    # Samples tab - Krea2 Ostris Edit injected directly into Prompt & Dimensions card (below its fields)
     try:
         import lora_trainer_gui as gui_mod
         global COLORS
         COLORS = gui_mod.COLORS
     except: return
-    # locate outer of Samples tab: via sample_settings_frame -> grid_holder -> outer
-    outer = None
+    # locate Prompt & Dimensions card via sample_prompt_text's parent
+    prompt_card = None
     try:
-        if hasattr(self, 'sample_settings_frame'):
-            outer = self.sample_settings_frame.master.master  # grid_holder -> outer
-        elif hasattr(self, 'samples_tab'):
-            # fallback: first child frame with bg_deep
-            for child in self.samples_tab.winfo_children():
-                # scrollable_frame is first
-                try:
-                    for c2 in child.winfo_children():
-                        if isinstance(c2, tk.Frame):
-                            outer = c2
-                            break
-                except: pass
+        if hasattr(self, 'sample_prompt_text'):
+            prompt_card = self.sample_prompt_text.master  # prompt_card is parent of the Text widget
     except: pass
-    if outer is None or not hasattr(outer, 'pack'):
-        print("[chaotic] samples outer not found, trying via prompt_text")
-        try:
-            outer = self.sample_prompt_text.master.master.master.master  # prompt_card -> sample_settings_frame -> grid_holder -> outer
-        except: pass
-    if outer is None:
-        print("[chaotic] could not find samples outer")
+    if prompt_card is None:
+        print("[chaotic] could not find prompt_card")
         return
-    print(f"[chaotic] samples outer found: {outer}")
+    print(f"[chaotic] prompt_card found: {prompt_card}")
     try:
         from lora_trainer_gui import COLORS as _C
-        card = self._start_section_card(outer, "Chaotic — Krea2 Ostris Edit (testar edit no sampling)", "Qwen3-VL vision (384px) + VAE latents (1MP t=0) + kv_cache. Use para testar se a edit LoRA funciona ao vivo - refs viram tokens em t=0 (index_timestep_zero).")
-        card.grid_columnconfigure(1, weight=1)
-        # we want card packed, _start_section_card already packs via outer? In samples, it uses pack? Check: _start_section_card packs? In samples, prompt_card = _start_section_card(...) returns card that is packed? Actually _start_section_card creates card and packs? Need to ensure card is added to outer - it already is via _start_section_card's pack
-        # Instead we created card inside outer already - _start_section_card does pack into outer
-        # Find the card we just created (last child)
-        # Add content into card
-        r = 0
-        tk.Label(card, text="Imagens de referencia (ate 3) — P picture N + VAE:", font=("Segoe UI", 9, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,2))
+        # Determine next free row in prompt_card (currently rows 0-10 used, next is 11)
+        # Find max grid row used
+        max_row = 0
+        try:
+            for child in prompt_card.winfo_children():
+                info = child.grid_info()
+                if info:
+                    r = int(info.get('row', 0))
+                    if r > max_row: max_row = r
+        except: max_row = 10
+        r = max_row + 1
+        ttk.Separator(prompt_card, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
+        r+=1
+        tk.Label(prompt_card, text="Chaotic — Krea2 Ostris Edit (test edit in sampling)", font=("Segoe UI", 10, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(2,2))
+        r+=1
+        tk.Label(prompt_card, text="Qwen3-VL vision (384px) + VAE latents (1MP t=0) + kv_cache. Use to test if edit LoRA works live - refs become tokens at t=0 (index_timestep_zero).", font=("Segoe UI", 8), fg=_C["text_muted"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0,4))
+        r+=1
+        tk.Label(prompt_card, text="Reference images (up to 3) — Picture N + VAE:", font=("Segoe UI", 9, "bold"), fg="#FF6B00", bg=_C["bg_surface"]).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,2))
         r+=1
         self._chaotic_krea2_images = []
         self._chaotic_kv_cache = tk.BooleanVar(value=False)
         for idx in range(3):
-            fr = ttk.Frame(card)
+            fr = ttk.Frame(prompt_card)
             fr.grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=2)
             ttk.Label(fr, text=f"Image {idx+1}:").pack(side=tk.LEFT, padx=(0,4))
             var = tk.StringVar(value="")
-            ent = ttk.Entry(fr, textvariable=var, width=40)
+            ent = ttk.Entry(fr, textvariable=var, width=42)
             ent.pack(side=tk.LEFT)
             self._chaotic_krea2_images.append(var)
             self.entries[f'CHAOTIC_KREA2_IMG{idx+1}'] = ent
@@ -625,14 +620,14 @@ def _inject_chaotic_samples_ui(self):
             ttk.Button(fr, text="Browse", command=_mk()).pack(side=tk.LEFT, padx=(4,0))
             ttk.Button(fr, text="Clear", command=lambda v=var: v.set("")).pack(side=tk.LEFT, padx=(2,0))
             r+=1
-        kv_fr = ttk.Frame(card)
+        kv_fr = ttk.Frame(prompt_card)
         kv_fr.grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=4)
-        ttk.Checkbutton(kv_fr, text="kv_cache (LoRA treinada com kv_cache=true)", variable=self._chaotic_kv_cache).pack(side=tk.LEFT)
+        ttk.Checkbutton(kv_fr, text="kv_cache (LoRA trained with kv_cache=true)", variable=self._chaotic_kv_cache).pack(side=tk.LEFT)
         self.entries['CHAOTIC_KV_CACHE'] = self._chaotic_kv_cache
-        tk.Label(kv_fr, text="off=normal edit, on=KV cacheado (mais rapido, so se LoRA treinada assim)", font=("Segoe UI", 8), fg=_C["text_muted"], bg=_C["bg_surface"]).pack(side=tk.LEFT, padx=(8,0))
+        tk.Label(kv_fr, text="off=normal edit, on=cached KV (faster, only if LoRA trained with it)", font=("Segoe UI", 8), fg=_C["text_muted"], bg=_C["bg_surface"]).pack(side=tk.LEFT, padx=(8,0))
         r+=1
-        tk.Label(card, text="Como testar: selecione 1-3 refs, deixe VAE conectado (se quiser VAE latent), prompt com trigger, Generate Sample. Refs sao encodadas via Qwen (semantico) + VAE (t=0).", font=("Segoe UI", 8, "italic"), fg=_C["text_explain"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,0))
-        print("[chaotic] samples Krea2 edit card injected")
+        tk.Label(prompt_card, text="How to test: select 1-3 refs, keep VAE connected (for VAE latent), prompt with trigger, Generate Sample. Refs are encoded via Qwen (semantic) + VAE (t=0).", font=("Segoe UI", 8, "italic"), fg=_C["text_explain"], bg=_C["bg_surface"], wraplength=640, justify=tk.LEFT).grid(row=r, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(4,0))
+        print("[chaotic] Krea2 edit injected into Prompt & Dimensions card")
     except Exception as e:
         print(f"[chaotic] samples card failed: {e}")
         import traceback; traceback.print_exc()
