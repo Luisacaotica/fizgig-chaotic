@@ -53,6 +53,11 @@ Original collapsed sections (`Optimizer`, `Other Options`, `Memory & Precision`)
 ### 7 — Black & Orange theme
 - **Where:** `launch_chaotic.*` only (vanilla stays blue). `CHAOTIC_COLORS` (`patch.py:43` `bg_deep #0A0A0A`, `accent #FF6B00`) overrides `lora_trainer_gui.py:55` `COLORS` before widgets, plus `clam` ttk style (`TButton`, `TNotebook.Tab`, `Progressbar`). Title gets `[CHAOTIC]` / `[CHAOTIC - ORANGE]`.
 
+### 8 — Grouped hub (Chaotic tab — fix for collapsed params)
+- **Where:** `✦ Chaotic` first tab — `lora_trainer_gui.py:1830` `notebook` hub with `Data • Training • Misc • Modify • Options` jump buttons (`extensions/chaotic/patch.py:_inject_chaotic_full_tab`)
+- **What:** Previous LLM reorg hid `1.Start..5.Training` but failed to move `Canvas window` cards (`card.master = outer` illegal + `outer_src` 2-level search missed `canvas.create_window` `lora_trainer_gui.py:3056`), leaving `Chaotic` empty. Fixed: hub keeps all 10 tabs flat and jumps via `notebook.select()` — no `pack(in_=)` reparent. `CHAOTIC_GROUPED=1` env tries experimental `place(in_=sub)` grouping; default `0` is flat+hub (stable).
+- **Hub layout:** `Data` → `1.Start/2.Image Prep/3.Captions`, `Training` → `4.Samples/5.Training`, `Misc` → `Profiler/Repair/Explorer/Royale/Extract/Metadata`, `Modify` → `Training → Training Parameters`, `Options` → `Preferences + Training → Memory & Seed`
+
 ## How it survives updates
 - Lives in `extensions/chaotic/` (`patch.py`, `README.md`, `fork_guide.md`). Loaded via `launch_chaotic.pyw` which imports `lora_trainer_gui`, patches `LoRATrainerGUI` class (`apply_chaotic_patches`), then instantiates it — no core file edited → `git pull` / `update_fizgig.bat` safe.
 - Title proves it: window title gets ` [CHAOTIC]` / `CHAOTIC (Luisa Caotica)` (`launch_chaotic.pyw`).

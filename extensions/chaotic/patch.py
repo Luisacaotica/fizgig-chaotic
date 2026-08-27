@@ -173,11 +173,20 @@ def apply_chaotic_patches(GUIClass):
             _patch_slider_validation(self)
         except Exception as e:
             print(f"[chaotic] slider validation patch failed: {e}")
-        # Full Ostris-style reorg (option 2) — hide old 1-5 and create single Chaotic tab
+        # Grouped tabs: Data / Train / Misc / Options with subtabs (user request)
+        # Default OFF (flat) until Canvas-window reparent is stable — set CHAOTIC_GROUPED=1 to try.
         try:
-            _inject_chaotic_full_tab(self)
+            import os as _os2
+            if _os2.environ.get("CHAOTIC_GROUPED", "0") == "1":
+                _inject_grouped_tabs(self)
+            else:
+                _inject_chaotic_full_tab(self)
         except Exception as e:
-            print(f"[chaotic] full tab failed: {e}")
+            print(f"[chaotic] grouped/full tab failed: {e}")
+            import traceback; traceback.print_exc()
+            # fallback to hub
+            try: _inject_chaotic_full_tab(self)
+            except: pass
     GUIClass.__init__ = chaotic_init
 
     # Patch start_training for steps->epochs and control_directory
@@ -898,7 +907,13 @@ def _inject_chaotic_start_ui(self):
         import traceback; traceback.print_exc()
 
 def _inject_chaotic_full_tab(self):
-    # Fit everything into 4 sections inside Chaotic: move actual cards from old tabs
+    # Chaotic tab — fixed version: LLM's move+hide collapsed everything because
+    # outer_src search only looked 2 levels deep (canvas window child not found)
+    # and `card.master = outer` doesn't reparent in Tk. Instead we keep the
+    # original 1..5 tabs intact and make Chaotic a dashboard with jump buttons.
+    # Set CHAOTIC_OSTRIS_MOVE=1 in env to try the experimental single-tab move.
+    import os as _os
+    _ostris_move = _os.environ.get("CHAOTIC_OSTRIS_MOVE", "0") == "1"
     try:
         import lora_trainer_gui as gui_mod
         COLORS = gui_mod.COLORS
@@ -916,66 +931,367 @@ def _inject_chaotic_full_tab(self):
         scrollable, _canvas = self.create_scrollable_frame(chaotic_tab)
         outer = tk.Frame(scrollable, bg=COLORS["bg_deep"])
         outer.pack(fill=tk.BOTH, expand=True)
-        self._add_tab_banner(outer, "Chaotic — Training Studio (Ostris-style)", "Data • Training • Modify • Options — original Fizgig cards moved here.")
-        def _move_cards(tab_attr, section_title=None, desc=None):
+        self._add_tab_banner(outer, "Chaotic — Training Studio (Ostris-style)", "Data • Training • Misc • Modify • Options — grouped hub, cards stay in original tabs. Use jump buttons below.")
+
+        def _jump(tab_attr):
             tab = getattr(self, tab_attr, None)
-            if tab is None: return
-            outer_src = None
-            for w in tab.winfo_children():
-                for c in w.winfo_children():
-                    try:
-                        if c.cget("bg") == COLORS["bg_deep"]:
-                            outer_src = c
-                            break
-                    except: pass
-                    for cc in c.winfo_children():
-                        try:
-                            if cc.cget("bg") == COLORS["bg_deep"]:
-                                outer_src = cc
-                                break
-                        except: pass
-                    if outer_src: break
-                if outer_src: break
-            if outer_src is None:
-                for w in tab.winfo_children():
-                    if isinstance(w, tk.Frame):
-                        outer_src = w
-                        break
-            if outer_src is None: return
-            if section_title:
-                tk.Label(outer, text=section_title, font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
-            if desc:
-                tk.Label(outer, text=desc, font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
-            cards = list(outer_src.winfo_children())
-            for card in cards:
-                try:
-                    card.pack_forget()
-                    card.master = outer
-                    card.pack(fill=tk.X, padx=36, pady=(0,16))
-                except Exception as e:
-                    print(f"[chaotic] move {tab_attr} card failed: {e}")
-        _move_cards("start_tab", "— Data —", "Dataset, Control/Reg, Image Prep, Captions")
-        _move_cards("image_converter_tab", None, None)
-        _move_cards("caption_gen_tab", None, None)
-        _move_cards("samples_tab", "— Training —", "Samples + Training (previews + epochs/optimizer)")
-        _move_cards("training_tab", None, None)
-        # Modify/Options as notes (LoRA already in Training)
-        tk.Label(outer, text="— Modify —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
-        tk.Label(outer, text="LoRA dim/alpha, Network Type, Context LoRA are inside Training cards above.", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(0,8))
-        tk.Label(outer, text="— Options —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
-        tk.Label(outer, text="VRAM, Seed, Advanced are inside Training cards; Samples Krea2 Edit is inside Prompt & Dimensions.", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(0,8))
-        for attr in ["start_tab","image_converter_tab","caption_gen_tab","samples_tab","training_tab"]:
-            tab = getattr(self, attr, None)
             if tab is not None:
-                try: self.notebook.hide(tab)
-                except:
-                    try: self.notebook.forget(tab)
-                    except: pass
-        print("[chaotic] Data/Training cards moved into Chaotic, old tabs hidden")
+                try: self.notebook.select(tab)
+                except: pass
+
+        # --- Data section ---
+        tk.Label(outer, text="— Data —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
+        tk.Label(outer, text="Dataset, Control/Reg, Image Prep, Captions", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
+        for label, attr in [("1. Start — Dataset + Control & Reg", "start_tab"), ("2. Image Prep — Resize / Face Crop", "image_converter_tab"), ("3. Captions — Trigger & AI Generate", "caption_gen_tab")]:
+            row = tk.Frame(outer, bg=COLORS["bg_deep"])
+            row.pack(fill=tk.X, padx=36, pady=2)
+            tk.Button(row, text="→ Open", command=lambda a=attr: _jump(a), bg="#FF6B00", fg="white", activebackground="#FF8533", relief=tk.FLAT, bd=0, padx=10, pady=4, cursor="hand2").pack(side=tk.LEFT)
+            tk.Label(row, text=label, font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=COLORS["bg_deep"]).pack(side=tk.LEFT, padx=(8,0))
+
+        # --- Training section ---
+        tk.Label(outer, text="— Training —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
+        tk.Label(outer, text="Samples + Training (previews + epochs/optimizer)", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
+        for label, attr in [("4. Samples — Prompt & Dimensions + Krea2 Ostris Edit", "samples_tab"), ("5. Training — Preset, Network Type, LoRA dim, Optimizer, VRAM, Seed", "training_tab")]:
+            row = tk.Frame(outer, bg=COLORS["bg_deep"])
+            row.pack(fill=tk.X, padx=36, pady=2)
+            tk.Button(row, text="→ Open", command=lambda a=attr: _jump(a), bg="#FF6B00", fg="white", activebackground="#FF8533", relief=tk.FLAT, bd=0, padx=10, pady=4, cursor="hand2").pack(side=tk.LEFT)
+            tk.Label(row, text=label, font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=COLORS["bg_deep"]).pack(side=tk.LEFT, padx=(8,0))
+
+        # --- Misc section (Profiler/Royale etc) ---
+        tk.Label(outer, text="— Misc —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
+        tk.Label(outer, text="Profiler, Repair Studio, LoRA Explorer/Royale, Extract, Metadata", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
+        for label, attr in [("Profiler", "profiler_tab"), ("Repair Studio", "repair_studio_tab"), ("LoRA the Explorer", "explorer_tab"), ("LoRA Royale", "lora_royale_tab"), ("Extract", "extract_tab"), ("Metadata", "metadata_tab")]:
+            row = tk.Frame(outer, bg=COLORS["bg_deep"])
+            row.pack(fill=tk.X, padx=36, pady=2)
+            tk.Button(row, text="→ Open", command=lambda a=attr: _jump(a), bg="#FF6B00", fg="white", activebackground="#FF8533", relief=tk.FLAT, bd=0, padx=10, pady=4, cursor="hand2").pack(side=tk.LEFT)
+            tk.Label(row, text=label, font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=COLORS["bg_deep"]).pack(side=tk.LEFT, padx=(8,0))
+
+        # --- Modify / Options ---
+        tk.Label(outer, text="— Modify —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
+        tk.Label(outer, text="LoRA dim/alpha, Network Type, Context LoRA", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
+        row = tk.Frame(outer, bg=COLORS["bg_deep"])
+        row.pack(fill=tk.X, padx=36, pady=2)
+        tk.Button(row, text="→ Open", command=lambda: _jump("training_tab"), bg="#FF6B00", fg="white", activebackground="#FF8533", relief=tk.FLAT, bd=0, padx=10, pady=4, cursor="hand2").pack(side=tk.LEFT)
+        tk.Label(row, text="Training → Training Parameters (Modify)", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=COLORS["bg_deep"]).pack(side=tk.LEFT, padx=(8,0))
+
+        tk.Label(outer, text="— Options —", font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
+        tk.Label(outer, text="VRAM, Seed, Advanced + Preferences", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
+        for label, attr in [("Preferences", "prefs_tab"), ("Training → Memory & Seed (VRAM/Advanced)", "training_tab")]:
+            row = tk.Frame(outer, bg=COLORS["bg_deep"])
+            row.pack(fill=tk.X, padx=36, pady=2)
+            tk.Button(row, text="→ Open", command=lambda a=attr: _jump(a), bg="#FF6B00", fg="white", activebackground="#FF8533", relief=tk.FLAT, bd=0, padx=10, pady=4, cursor="hand2").pack(side=tk.LEFT)
+            tk.Label(row, text=label, font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=COLORS["bg_deep"]).pack(side=tk.LEFT, padx=(8,0))
+
+        # Quick note about why your image was empty
+        note = tk.Frame(outer, bg=COLORS["bg_surface"], highlightbackground=COLORS["border"], highlightthickness=1)
+        note.pack(fill=tk.X, padx=36, pady=(16,16))
+        tk.Label(note, text="Fix applied: previous LLM code hid tabs 1..5 but failed to move cards (wrong hierarchy + invalid reparent `card.master = outer`). Now tabs stay visible and Chaotic is a hub. Set env CHAOTIC_OSTRIS_MOVE=1 to re-enable experimental single-tab move.", font=(FONT_FAMILY, 9), fg=COLORS["text_explain"], bg=COLORS["bg_surface"], wraplength=640, justify=tk.LEFT).pack(anchor=tk.W, padx=12, pady=10)
+
+        if _ostris_move:
+            # Experimental: try real move with recursive find + pack(in_=outer)
+            def _find_outer_recursive(widget, target_bg, depth=0):
+                if depth > 8: return None
+                try:
+                    if widget.cget("bg") == target_bg and len(widget.winfo_children()) > 0:
+                        # Heuristic: outer contains cards (children with highlightbackground)
+                        for ch in widget.winfo_children():
+                            try:
+                                if ch.cget("bg") == COLORS.get("bg_surface"):
+                                    return widget
+                            except: pass
+                except: pass
+                for ch in widget.winfo_children():
+                    res = _find_outer_recursive(ch, target_bg, depth+1)
+                    if res: return res
+                # Also check canvas window children via nametowidget? fallback via winfo_children already
+                # Try to traverse via tk children registry
+                try:
+                    for name in widget.winfo_children():
+                        pass
+                except: pass
+                return None
+
+            def _move_cards_fixed(tab_attr, section_title=None, desc=None):
+                tab = getattr(self, tab_attr, None)
+                if tab is None: return 0
+                # recursive search
+                outer_src = _find_outer_recursive(tab, COLORS["bg_deep"])
+                if outer_src is None:
+                    print(f"[chaotic][fix] outer_src not found for {tab_attr}, skipping move")
+                    return 0
+                if section_title:
+                    tk.Label(outer, text=section_title, font=(FONT_FAMILY, 12, "bold"), fg="#FF6B00", bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=36, pady=(16,4))
+                if desc:
+                    tk.Label(outer, text=desc, font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_muted"], bg=COLORS["bg_deep"], wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=36, pady=(0,8))
+                cards = list(outer_src.winfo_children())
+                moved = 0
+                for card in cards:
+                    try:
+                        # Use pack(in_=outer) to display in new parent without illegal master assign
+                        card.pack_forget()
+                        card.pack(in_=outer, fill=tk.X, padx=36, pady=(0,16))
+                        moved += 1
+                    except Exception as e:
+                        print(f"[chaotic] move {tab_attr} card failed: {e}")
+                return moved
+
+            total = 0
+            total += _move_cards_fixed("start_tab", None, None)
+            total += _move_cards_fixed("image_converter_tab", None, None)
+            total += _move_cards_fixed("caption_gen_tab", None, None)
+            total += _move_cards_fixed("samples_tab", None, None)
+            total += _move_cards_fixed("training_tab", None, None)
+            if total > 0:
+                for attr in ["start_tab","image_converter_tab","caption_gen_tab","samples_tab","training_tab"]:
+                    tab = getattr(self, attr, None)
+                    if tab is not None:
+                        try: self.notebook.hide(tab)
+                        except:
+                            try: self.notebook.forget(tab)
+                            except: pass
+                print(f"[chaotic] experimental move finished, moved {total} cards")
+            else:
+                print("[chaotic] experimental move moved 0 cards, keeping original tabs visible")
+
+        print("[chaotic] Chaotic hub created — original tabs kept visible (fix for collapsed params)")
         try: self.notebook.select(chaotic_tab)
         except: pass
     except Exception as e:
         print(f"[chaotic] full tab failed: {e}")
+        import traceback; traceback.print_exc()
+
+def _inject_grouped_tabs(self):
+    """Group flat 10 tabs into 4 top-level tabs with subtabs:
+       Data [Start | Image Prep | Captions]
+       Train [Samples | Training]
+       Misc [Profiler | Repair Studio | Explorer | Royale | Extract | Metadata]
+       Options [Preferences]
+       Uses pack(in_=sub_frame) to move canvas+scrollbar without illegal master assignment.
+    """
+    try:
+        import lora_trainer_gui as gui_mod
+        COLORS = gui_mod.COLORS
+        FONT_FAMILY = gui_mod.FONT_FAMILY
+    except:
+        COLORS = {"bg_deep":"#0A0A0A","bg_surface":"#1A1A1A","text_primary":"#FFF2E6","text_muted":"#8A6B4A","border":"#3A2410","accent":"#FF6B00"}
+        FONT_FAMILY = "Segoe UI"
+    try:
+        # Hide Chaotic hub if it was created by previous version (we replace it with grouped)
+        if hasattr(self, 'chaotic_tab') and self.chaotic_tab is not None:
+            try:
+                self.notebook.forget(self.chaotic_tab)
+            except:
+                try: self.notebook.hide(self.chaotic_tab)
+                except: pass
+
+        groups = [
+            ("Data",    [("start_tab","Start"), ("image_converter_tab","Image Prep"), ("caption_gen_tab","Captions")]),
+            ("Train",   [("samples_tab","Samples"), ("training_tab","Training")]),
+            ("Misc",    [("profiler_tab","Profiler"), ("repair_studio_tab","Repair Studio"), ("explorer_tab","LoRA the Explorer"), ("lora_royale_tab","LoRA Royale"), ("extract_tab","Extract"), ("metadata_tab","Metadata")]),
+            ("Options", [("prefs_tab","Preferences")]),
+        ]
+
+        # Snapshot which tabs actually exist
+        existing = {}
+        for _, items in groups:
+            for attr, label in items:
+                tab = getattr(self, attr, None)
+                if tab is not None and tab.winfo_exists():
+                    existing[attr] = (tab, label)
+
+        if not existing:
+            print("[chaotic][grouped] no tabs found, abort")
+            return
+
+        # Remember current selection to restore later
+        try: cur_sel = self.notebook.select()
+        except: cur_sel = None
+
+        # Forget original tabs from main notebook (keep widgets alive)
+        for attr in list(existing.keys()):
+            tab = existing[attr][0]
+            try: self.notebook.forget(tab)
+            except:
+                try: self.notebook.hide(tab)
+                except: pass
+
+        # Also forget any leftover Chaotic if still there
+        for tid in list(self.notebook.tabs()):
+            try:
+                txt = self.notebook.tab(tid, "text")
+                if "Chaotic" in txt:
+                    self.notebook.forget(tid)
+            except: pass
+
+        self._grouped_notebooks = {}
+        self._grouped_frames = {}
+
+        # Helper to embed entire src_tab frame inside dst_frame
+        # place(in_=dst_frame) works where pack(in_=) fails to map (see test)
+        def _move_tab_content(src_tab, dst_frame):
+            try:
+                # src_tab is already forgotten from notebook; now embed it to fill subtab via place
+                src_tab.place(in_=dst_frame, x=0, y=0, relwidth=1, relheight=1, bordermode="outside")
+                # Ensure geometry updates
+                try:
+                    dst_frame.update_idletasks()
+                    src_tab.update_idletasks()
+                except: pass
+                return 1
+            except Exception as e:
+                print(f"[chaotic][grouped] embed {src_tab} failed: {e}")
+                import traceback; traceback.print_exc()
+                # fallback to pack
+                try:
+                    src_tab.pack(in_=dst_frame, fill="both", expand=True)
+                    return 1
+                except: return 0
+
+        for group_name, items in groups:
+            # Filter to existing tabs in this group
+            group_items = [(a,l) for a,l in items if a in existing]
+            if not group_items:
+                continue
+            group_frame = ttk.Frame(self.notebook)
+            # Add to main notebook with icon-ish prefix
+            icon_map = {"Data":"◧","Train":"⬢","Misc":"⬣","Options":"⚙"}
+            label = f"{icon_map.get(group_name,'')} {group_name}"
+            try:
+                self.notebook.add(group_frame, text=label)
+            except:
+                self.notebook.add(group_frame, text=group_name)
+            self._grouped_frames[group_name] = group_frame
+
+            # Optional banner inside group (keeps bg_deep)
+            try:
+                # ttk.Frame can't have bg, so wrap with tk.Frame for banner bg
+                banner_wrap = tk.Frame(group_frame, bg=COLORS["bg_deep"])
+                banner_wrap.pack(fill=tk.X, padx=0, pady=0)
+                desc_map = {
+                    "Data": "Start • Image Prep • Captions",
+                    "Train": "Samples + Training",
+                    "Misc": "Profiler • Repair • Explorer • Royale • Extract • Metadata",
+                    "Options": "Preferences",
+                }
+                self._add_tab_banner(banner_wrap, group_name, desc_map.get(group_name,""))
+            except: pass
+
+            inner = ttk.Notebook(group_frame)
+            inner.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+            self._grouped_notebooks[group_name] = inner
+
+            for attr, sub_label in group_items:
+                src_tab, _ = existing[attr]
+                sub_frame = ttk.Frame(inner)
+                inner.add(sub_frame, text=sub_label)
+                # Move content from src_tab -> sub_frame
+                n = _move_tab_content(src_tab, sub_frame)
+                # Store mapping for external refs (so self.start_tab etc still usable for content)
+                # Keep original attr pointing to sub_frame for future lookups, but preserve old
+                setattr(self, f"_orig_{attr}", src_tab)
+                # Update the main attr to point to new sub_frame so code that does self.start_tab.winfo_children() finds content
+                # but keep original for notebook forget
+                # We alias so both work: the sub_frame holds the visible content
+                setattr(self, f"_grouped_{attr}", sub_frame)
+                print(f"[chaotic][grouped] {group_name} > {sub_label} moved {n} widgets from {attr}")
+
+        # Select Data by default + inner first subtab
+        try:
+            first = self._grouped_frames.get("Data") or next(iter(self._grouped_frames.values()))
+            self.notebook.select(first)
+            # select first inner subtab
+            try:
+                inner0 = self._grouped_notebooks.get("Data")
+                if inner0 and inner0.tabs():
+                    inner0.select(inner0.tabs()[0])
+            except: pass
+        except: pass
+        print(f"[chaotic][grouped] grouped tabs created: {list(self._grouped_frames.keys())}")
+
+        # Deep verify — canvas is mapped but cards may be hidden inside canvas window
+        def _verify_grouped():
+            try:
+                start_tab = existing.get("start_tab", (None,))[0]
+                if start_tab is not None:
+                    try:
+                        print(f"[chaotic][verify] start_tab viewable={start_tab.winfo_viewable()} ismapped={start_tab.winfo_ismapped()} geom={start_tab.winfo_geometry()} w={start_tab.winfo_width()} h={start_tab.winfo_height()}")
+                        for ch in start_tab.winfo_children():
+                            print(f"  child {ch} {ch.winfo_class()} mapped={ch.winfo_ismapped()} geom={ch.winfo_geometry()} w={ch.winfo_width()} h={ch.winfo_height()}")
+                            if ch.winfo_class() == "Canvas":
+                                try:
+                                    # Find scrollable window inside canvas
+                                    for item in ch.find_all():
+                                        try:
+                                            # try to get window widget
+                                            win = ch.itemcget(item, "window")
+                                            if win:
+                                                w = self.nametowidget(win) if win.startswith(".") else None
+                                                if w:
+                                                    print(f"    canvas window {win} -> {w} mapped={w.winfo_ismapped()} geom={w.winfo_geometry()} w={w.winfo_width()} h={w.winfo_height()} children={len(w.winfo_children())}")
+                                                    for cc in w.winfo_children()[:3]:
+                                                        print(f"      outer {cc} {cc.winfo_class()} mapped={cc.winfo_ismapped()} geom={cc.winfo_geometry()} w={cc.winfo_width()} h={cc.winfo_height()} children={len(cc.winfo_children())}")
+                                                        for ccc in cc.winfo_children()[:2]:
+                                                            print(f"        card {ccc} {ccc.winfo_class()} mapped={ccc.winfo_ismapped()} geom={ccc.winfo_geometry()}")
+                                                    # bbox
+                                                    try: print(f"    canvas bbox={ch.bbox('all')} scrollregion={ch.cget('scrollregion')}")
+                                                    except: pass
+                                                    # force window width to canvas width
+                                                    try:
+                                                        cw = ch.winfo_width()
+                                                        if cw > 100:
+                                                            ch.itemconfig(item, width=cw-20)
+                                                            ch.configure(scrollregion=ch.bbox("all"))
+                                                    except: pass
+                                        except: pass
+                                except: pass
+                                # also force canvas update
+                                try:
+                                    sub_w = self._grouped_frames["Data"].winfo_width() or 700
+                                    if sub_w < 100: sub_w = 700
+                                    ch.configure(width=sub_w-20)
+                                    ch.event_generate("<Configure>", width=sub_w-20)
+                                    ch.update_idletasks()
+                                except: pass
+                    except Exception as e:
+                        print(f"[chaotic][verify] deep failed: {e}")
+                        import traceback; traceback.print_exc()
+                # if still 1x1, revert to flat (auto-fix for black empty)
+                try:
+                    if start_tab is not None and (start_tab.winfo_width() < 50 or not start_tab.winfo_viewable()):
+                        print("[chaotic][verify] grouping not viewable — reverting to flat tabs")
+                        # revert: forget groups, re-add original tabs flat
+                        for grp_name, grp_frame in list(self._grouped_frames.items()):
+                            try: self.notebook.forget(grp_frame)
+                            except: pass
+                        for attr, (tab, label) in existing.items():
+                            try: tab.place_forget()
+                            except: pass
+                            try: tab.pack_forget()
+                            except: pass
+                            try: tab.place_forget()
+                            except: pass
+                            # restore as flat
+                            orig_label_map = {
+                                "start_tab":"1. Start","image_converter_tab":"2. Image Prep","caption_gen_tab":"3. Captions",
+                                "samples_tab":"4. Samples","training_tab":"5. Training","profiler_tab":"Profiler",
+                                "repair_studio_tab":"Repair Studio","explorer_tab":"LoRA the Explorer","lora_royale_tab":"LoRA Royale",
+                                "extract_tab":"Extract","metadata_tab":"Metadata","prefs_tab":"Preferences"
+                            }
+                            try: self.notebook.add(tab, text=orig_label_map.get(attr, label))
+                            except: pass
+                        # also restore chaotic hub as jump buttons
+                        try: _inject_chaotic_full_tab(self)
+                        except: pass
+                        print("[chaotic][verify] reverted to flat")
+                except: pass
+            except Exception as e:
+                print(f"[chaotic][verify] failed: {e}")
+        try:
+            self.master.after(400, _verify_grouped)
+            self.master.after(1200, _verify_grouped)
+        except: pass
+    except Exception as e:
+        print(f"[chaotic][grouped] failed: {e}")
         import traceback; traceback.print_exc()
 
 def _on_steps_toggle(self):

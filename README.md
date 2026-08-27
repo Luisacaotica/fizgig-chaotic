@@ -38,6 +38,7 @@
 > - **LoRA adapter** — Fizgig already trains LoRA + LoKR (`src/fizgig/networks/lora.py:23`), Chaotic surfaces `Network Type` + `Context LoRA` (= AI-Toolkit `control_lora`) + 4060 Ti 8GB tips
 > - **Automagic v1/v2/v3** — ported `toolkit/optimizers/automagic3.py` → `extensions/chaotic/optimizers/` + catalog patch (`src/fizgig/training/optimizers.py:39`)
 > - **Black & Orange theme** — `launch_chaotic.*` only, `COLORS` `bg_deep #0A0A0A` / `accent #FF6B00` (`extensions/chaotic/patch.py:43`)
+> - **Grouped hub (fix for collapsed params)** — `✦ Chaotic` first tab is a hub with `Data • Training • Misc • Modify • Options` `→ Open` buttons that `notebook.select()` the real tabs — previous LLM hid `1..5` but `card.master=outer` + shallow `outer_src` search left `Chaotic` empty; hub keeps flat tabs visible. `CHAOTIC_GROUPED=1` tries experimental `place(in_=sub)` subtabs.
 > - **Survives updates** — lives in `extensions/chaotic/` via `launch_chaotic.pyw` monkey-patch; `update_fizgig.bat` never overwrites
 >
 > Launch: `launch_chaotic.bat` (silent, orange) or `run_chaotic_console.bat` (console logs) — vanilla still via `run_fizgig.bat`. Title shows `[CHAOTIC - ORANGE]`. See [`extensions/chaotic/README.md`](extensions/chaotic/README.md) for full mapping.
