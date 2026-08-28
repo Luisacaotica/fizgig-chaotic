@@ -245,6 +245,101 @@ Settings are read at launch; Pause → Resume relaunches with your current setti
 
 ---
 
+## AI-Toolkit Parity Features
+
+Fizgig now achieves feature parity with AI-Toolkit across four key training parameters. All features work across Klein, Krea 2, and MiniMax H3 families.
+
+### 1. Weight Decay
+
+New dedicated `--weight_decay` parameter with full GUI integration.
+
+```bash
+# Command line usage
+--weight_decay 0.01
+# Or via optimizer args (equivalent)
+--optimizer_args "weight_decay=0.01"
+```
+
+**Implementation:**
+- `src/fizgig/training/optimizers.py:102` — `kwargs.setdefault("weight_decay", float(weight_decay))`
+- `src/fizgig/training/trainer.py:550` (Klein)
+- `src/fizgig/krea2/trainer.py:1589` (Krea 2)
+- `src/fizgig/minimax/trainer.py:2781` (MiniMax H3)
+
+**GUI:** `lora_trainer_gui.py:1724` — WEIGHT_DECAY entry wired into all 3 trainer command builders.
+
+### 2. Timestep Type & Timestep Bias
+
+Advanced timestep sampling control with multiple strategies.
+
+```bash
+# Timestep type options
+--timestep_type sigmoid|linear|weighted|flux_shift|shift|...
+# Timestep bias (additive in 0-1 space)
+--timestep_bias -0.3..0.3
+```
+
+**Timestep Type Mapping:**
+- `_TIMESTEP_TYPE_MAP` in `trainer.py:3183` — aliases via `apply_aitk_timestep_aliases()`
+- `weighted` → `sigma + cosmap` mapping
+
+**Timestep Bias Implementation:**
+- `trainer.py:989/1034` — uniform/sigmoid/shift + sigma path
+- `src/fizgig/krea2/trainer.py:450` — `sample_krea2_timesteps` (clamped 0.02-0.98)
+- `src/fizgig/minimax/trainer.py:879` — sigma clamped
+
+**GUI:** TIMESTEP_TYPE and TIMESTEP_BIAS in `lora_trainer_gui.py:1724`.
+
+### 3. Loss Type
+
+Support for 7 different loss functions for flexible training optimization.
+
+```bash
+# Supported loss types
+--loss_type mse|mae|l1|huber|smooth_l1|pseudo_huber|wavelet
+# Optional parameters for specific loss types
+--huber_delta 1.0
+--wavelet_weight 0.5
+```
+
+**Implementation:**
+- `src/fizgig/training/trainer.py:3198` (Klein)
+- `src/fizgig/krea2/trainer.py:456` (Krea 2)
+- `src/fizgig/minimax/trainer.py:831` (MiniMax H3)
+- Helper function: `compute_aitk_loss()` in `trainer.py:402`
+
+### 4. Loss Multiplier
+
+Global and per-dataset loss scaling for fine-grained control.
+
+```bash
+# Global loss multiplier
+--loss_multiplier 1.0
+# Per-dataset configuration (in dataset TOML)
+[general]
+loss_multiplier = 0.8
+```
+
+**Implementation:**
+- **Global:** `trainer.py:3207` (Klein), `krea2/trainer.py:456`, `minimax/trainer.py:831`
+- **Per-dataset:** `dataset/config.py:52/126` — `BaseDatasetParams.loss_multiplier`
+- **Application:** `dataset/image_dataset.py:389` — `BucketBatchManager.loss_multiplier` → `stacked["loss_multiplier"]`
+- **Final formula:** `loss × global_multiplier × per_dataset_multiplier`
+
+**GUI:** LOSS_TYPE and LOSS_MULTIPLIER wired into all 3 trainers.
+
+### Verification
+
+```bash
+# All features verified clean
+py_compile --clean
+setup_parser --weight_decay 0.01 --loss_type huber --timestep_type linear
+# linear → uniform mapping works correctly
+compute_aitk_loss huber functional
+```
+
+---
+
 ## Training (Klein 9B)
 
 The foundation: fast, light, and tuned for one model.
