@@ -2632,6 +2632,50 @@ def train_minimax(
                                  network_alpha, lokr_factor)
         for _n in _rs_notes:
             logger.warning(f"[resume] {_n} — a resume continues the run it resumes")
+    # Training adapter (optional DeCFG LoRA, training-time only - discarded at inference)
+    # DiffSynth-Studio/MiniMax-H3-TrainingAdapter pattern: --preset_lora_path adapter.safetensors
+    # Applied FROZEN before the trainable network so the new LoRA learns on the de-distilled landscape.
+    _adapter_net = None
+    if training_adapter and str(training_adapter).lower() != "none":
+        _adapter_path = str(training_adapter)
+        # Allow bare name or directory-relative; resolve against minimaxtraineradapter folder
+        if not os.path.isfile(_adapter_path):
+            _candidates = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "minimaxtraineradapter", _adapter_path),
+                os.path.join("minimaxtraineradapter", _adapter_path),
+                os.path.join(os.path.dirname(dit_path) if dit_path else ".", _adapter_path),
+            ]
+            for _cand in _candidates:
+                if os.path.isfile(_cand):
+                    _adapter_path = _cand
+                    break
+        # Map friendly aliases to actual files
+        _alias_map = {
+            "fl2va": "minimax_h3_training_adapter_v1.safetensors",
+            "ref2va": "minimax_h3_ref2va_training_adapter_v1.safetensors",
+            "model": "model.safetensors",
+            "model_for_comfy": "model_for_comfy_dit.safetensors",
+        }
+        if _adapter_path.lower() in _alias_map:
+            _fname = _alias_map[_adapter_path.lower()]
+            _adapter_path = os.path.join(os.path.dirname(__file__), "..", "..", "minimaxtraineradapter", _fname)
+        if os.path.isfile(_adapter_path):
+            try:
+                from safetensors.torch import load_file
+                from fizgig.networks.lora import ensure_kohya_lora_state_dict, create_network_from_weights
+                _sd = ensure_kohya_lora_state_dict(load_file(_adapter_path))
+                _adapter_net = create_network_from_weights(None, 1.0, _sd, None, dit, for_inference=True)
+                _adapter_net.apply_to(text_encoders=None, unet=dit, apply_text_encoder=False, apply_unet=True)
+                _adapter_net.load_state_dict(_sd, strict=False)
+                _adapter_net.to(device=device, dtype=dtype).eval()
+                _adapter_net.requires_grad_(False)
+                logger.info(f"[adapter] training adapter loaded: {os.path.basename(_adapter_path)} ({len(_adapter_net.unet_loras)} modules, frozen) - de-distilled landscape, discard at inference")
+            except Exception as _e:
+                logger.warning(f"[adapter] failed to load { _adapter_path }: { _e} - continuing without adapter", exc_info=True)
+                _adapter_net = None
+        else:
+            logger.warning(f"[adapter] --training_adapter {training_adapter!r} not found - continuing without adapter")
+
     if network_type == "lokr":
         # LoKR (Kronecker) — same mechanism as Krea 2's: module_class swaps the parametrization
         # inside the identical scan/wrap machinery, so include_patterns (adaln exclusion) and the

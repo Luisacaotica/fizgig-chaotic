@@ -174,6 +174,10 @@ def setup_parser() -> argparse.ArgumentParser:
                         "weights (~0.17%% base error, ~21 GB) — what the reference trainer "
                         "does. 'nf4' decodes then 4-bit quantizes (~9.5%% error, ~11 GB). "
                         "'auto' picks int8 for a pre-quantized file, nf4 otherwise.")
+    p.add_argument("--training_adapter", default="none",
+                   help="DeCFG training adapter (DiffSynth-Studio/MiniMax-H3-TrainingAdapter). "
+                        "none | fl2va (minimax_h3_training_adapter_v1) | ref2va (minimax_h3_ref2va_training_adapter_v1) | "
+                        "path/to/model.safetensors. Injected frozen during training, discarded at inference.")
     p.add_argument("--no_quantize", action="store_true",
                    help="Train on the bf16 base (no NF4) — needs ~66 GB VRAM.")
     p.add_argument("--blocks_to_swap", default="auto",
@@ -309,6 +313,7 @@ def main():
         loss_type=args.loss_type, huber_delta=args.huber_delta,
         wavelet_weight=args.wavelet_weight, loss_multiplier=args.loss_multiplier,
         timestep_type=args.timestep_type, timestep_bias=args.timestep_bias,
+        training_adapter=args.training_adapter,
         metadata_title=args.metadata_title,
         metadata_author=args.metadata_author,
         metadata_description=args.metadata_description,

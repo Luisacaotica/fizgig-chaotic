@@ -1744,6 +1744,7 @@ class LoRATrainerGUI:
             "ADAPTIVE_LR_MAX": "4e-4",
             "CONTEXT_LORA_PATH": "",
             "CONTEXT_LORA_STRENGTH": "1.0",
+            "MINIMAX_TRAINING_ADAPTER": "none",
             "TIMESTEP_SAMPLING": "shift",
             "DISCRETE_FLOW_SHIFT": "3.0",
             "SIGMOID_SCALE": "1.0",
@@ -4553,6 +4554,41 @@ class LoRATrainerGUI:
         self._add_field_to_section(optimizer_content, "GRADIENT_ACCUMULATION", "Gradient Accumulation", "int", 2)
         self._add_field_to_section(optimizer_content, "MAX_GRAD_NORM", "Max Grad Norm", "float", 3)
         self._add_field_to_section(optimizer_content, "NETWORK_DROPOUT", "Network Dropout", "float", 4)
+        # AI-Toolkit parity: dedicated knobs (visible 2026-09)
+        self._add_field_to_section(optimizer_content, "WEIGHT_DECAY", "Weight Decay", "float", 5)
+        # Loss type dropdown (mse default)
+        _lt_label = tk.Label(optimizer_content, text="Loss Type:", font=(FONT_FAMILY, 10), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
+        _lt_label.grid(row=6, column=0, sticky=tk.W, padx=(12, 8), pady=4)
+        self.labels["LOSS_TYPE"] = _lt_label
+        self.entries["LOSS_TYPE"] = ttk.Combobox(optimizer_content, values=["mse","mae","huber","pseudo_huber","wavelet"], state="readonly", width=38)
+        self.entries["LOSS_TYPE"].set(str(self.settings.get("LOSS_TYPE","mse")))
+        self.entries["LOSS_TYPE"].grid(row=6, column=1, sticky=tk.EW, padx=5, pady=4)
+        self._add_field_to_section(optimizer_content, "LOSS_MULTIPLIER", "Loss Multiplier", "float", 7)
+        self._add_field_to_section(optimizer_content, "TIMESTEP_TYPE", "Timestep Type", "text", 8)
+        self._add_field_to_section(optimizer_content, "TIMESTEP_BIAS", "Timestep Bias", "float", 9)
+        # Hints
+        tk.Label(optimizer_content, text="(e.g. 0.01, maps to --weight_decay)", font=(FONT_FAMILY, 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=5, column=2, sticky=tk.W, padx=5)
+        tk.Label(optimizer_content, text="(global, dataset TOML multiplies on top)", font=(FONT_FAMILY, 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=7, column=2, sticky=tk.W, padx=5)
+        tk.Label(optimizer_content, text="(sigmoid/linear/weighted - alias for sampling)", font=(FONT_FAMILY, 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=8, column=2, sticky=tk.W, padx=5)
+        tk.Label(optimizer_content, text="(-0.3..0.3, + noisy / - clean)", font=(FONT_FAMILY, 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"]).grid(row=9, column=2, sticky=tk.W, padx=5)
+
+        # === Training Adapter (MiniMax H3) - ALWAYS VISIBLE ON TOP (moved from collapsed Other Options) ===
+        adapter_top = tk.Frame(outer, bg=COLORS["bg_surface"], highlightbackground=COLORS["border"], highlightthickness=1)
+        adapter_top.pack(fill=tk.X, padx=36, pady=(0, 12))
+        adapter_top.columnconfigure(1, weight=1)
+        tk.Label(adapter_top, text="Training Adapter (MiniMax H3):", font=(FONT_FAMILY, 10, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).grid(row=0, column=0, sticky=tk.W, padx=12, pady=(8,2))
+        self.entries["MINIMAX_TRAINING_ADAPTER"] = ttk.Combobox(adapter_top, values=["none","fl2va - minimax_h3_training_adapter_v1","ref2va - minimax_h3_ref2va_training_adapter_v1","model.safetensors","model_for_comfy_dit.safetensors"], state="readonly", width=40)
+        self.entries["MINIMAX_TRAINING_ADAPTER"].grid(row=0, column=1, sticky=tk.EW, padx=5, pady=(8,2))
+        _ada_cur = str(self.settings.get("MINIMAX_TRAINING_ADAPTER","none")).lower()
+        if "ref2va" in _ada_cur:
+            self.entries["MINIMAX_TRAINING_ADAPTER"].set("ref2va - minimax_h3_ref2va_training_adapter_v1")
+        elif "fl2va" in _ada_cur or "minimax_h3_training" in _ada_cur:
+            self.entries["MINIMAX_TRAINING_ADAPTER"].set("fl2va - minimax_h3_training_adapter_v1")
+        elif _ada_cur in ("none",""):
+            self.entries["MINIMAX_TRAINING_ADAPTER"].set("none")
+        else:
+            self.entries["MINIMAX_TRAINING_ADAPTER"].set(_ada_cur)
+        tk.Label(adapter_top, text="DeCFG adapter (Fizgig/minimaxtraineradapter) - injected frozen during training, discarded at inference. none = direct distilled training.", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"], wraplength=680, justify=tk.LEFT).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=12, pady=(0,8))
 
         # === Scheduler Section (Collapsed by default) ===
         scheduler_section = CollapsibleFrame(outer,"Other Options", default_expanded=False)
@@ -5002,6 +5038,10 @@ class LoRATrainerGUI:
             foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
         self._minimax_blocks_hint.grid(row=32, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
         self._refresh_minimax_blocks_count()
+
+        # --- Training Adapter (MiniMax only) ---------------------------------
+        ttk.Label(scheduler_content, text="Training Adapter:").grid(row=33, column=0, sticky=tk.W, padx=5, pady=(8, 2))
+        # moved top - see adapter_top below (was row 33/34 inside collapsed Other Options)
 
         # Training Structure lives in Training Parameters now — see _build_minimax_structure_row,
         # called from that section. It used to sit here in Other Options, collapsed, which is
@@ -26150,6 +26190,24 @@ class LoRATrainerGUI:
                     cmd += ["--timestep_bias", str(_tb)]
             except ValueError:
                 pass
+        # Training adapter (MiniMax only)
+        _ada = ""
+        try:
+            _ada = str(self.entries["MINIMAX_TRAINING_ADAPTER"].get() if "MINIMAX_TRAINING_ADAPTER" in self.entries else self.settings.get("MINIMAX_TRAINING_ADAPTER","none")).strip()
+        except Exception:
+            _ada = str(self.settings.get("MINIMAX_TRAINING_ADAPTER","none")).strip()
+        if _ada and _ada.lower() != "none":
+            # normalize friendly label to file/alias
+            _low = _ada.lower()
+            if "ref2va" in _low:
+                _ada = "ref2va"
+            elif "fl2va" in _low or "minimax_h3_training" in _low:
+                _ada = "fl2va"
+            elif _ada.endswith(".safetensors"):
+                pass
+            else:
+                _ada = "fl2va"
+            cmd += ["--training_adapter", _ada]
         # Output metadata (Other Options → Metadata) — recorded in the saved LoRA.
         for _mkey, _mflag in (("METADATA_TITLE", "--metadata_title"),
                               ("METADATA_AUTHOR", "--metadata_author"),
