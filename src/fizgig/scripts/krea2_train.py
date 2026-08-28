@@ -119,6 +119,22 @@ def setup_parser() -> argparse.ArgumentParser:
                         + ", ".join(available_optimizers()))
     p.add_argument("--optimizer_args", default="",
                    help='Extra optimizer kwargs, e.g. "weight_decay=0.01 betas=0.9,0.99"')
+    # AI-Toolkit parity
+    p.add_argument("--weight_decay", type=float, default=None,
+                   help="Dedicated weight_decay (toolkit optimizer_params weight_decay). "
+                        "Equivalent to --optimizer_args \"weight_decay=X\".")
+    p.add_argument("--loss_type", default="mse",
+                   choices=["mse", "mae", "l1", "huber", "smooth_l1", "pseudo_huber", "wavelet"],
+                   help="AI-Toolkit parity: loss_type")
+    p.add_argument("--huber_delta", type=float, default=1.0)
+    p.add_argument("--wavelet_weight", type=float, default=0.1)
+    p.add_argument("--loss_multiplier", type=float, default=1.0,
+                   help="Global loss multiplier (per-dataset from TOML multiplies on top)")
+    p.add_argument("--timestep_type", default=None,
+                   help="AI-Toolkit parity alias for timestep sampling")
+    p.add_argument("--timestep_bias", type=float, default=0.0,
+                   help="Additive bias to sampled timesteps in 0-1 range")
+    p.add_argument("--sigmoid_scale", type=float, default=1.0)
     p.add_argument("--compile_blocks", default="auto", choices=["auto", "on", "outside", "off"],
                    help="torch.compile the transformer blocks. 'auto' (default) enables it only "
                         "when the run is long enough to repay its ~90 s warm-up and the VRAM fits "
@@ -202,6 +218,11 @@ def main():
         lr_scheduler_num_cycles=args.lr_scheduler_num_cycles,
         lr_scheduler_power=args.lr_scheduler_power,
         log_per_image_loss=args.log_per_image_loss,
+        weight_decay=args.weight_decay,
+        loss_type=args.loss_type, huber_delta=args.huber_delta,
+        wavelet_weight=args.wavelet_weight, loss_multiplier=args.loss_multiplier,
+        timestep_type=args.timestep_type, timestep_bias=args.timestep_bias,
+        sigmoid_scale=args.sigmoid_scale,
         per_image_lr=args.per_image_lr,
         auto_recaption=args.auto_recaption,
         warmup_look_outliers=args.warmup_look_outliers,

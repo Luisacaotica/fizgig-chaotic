@@ -390,9 +390,11 @@ class BucketBatchManager:
         bucketed_item_info: dict[Tuple[int, int], list[ItemInfo]],
         batch_size: int,
         num_timestep_buckets: Optional[int] = None,
+        loss_multiplier: float = 1.0,
     ):
         self.batch_size = batch_size
         self.buckets = bucketed_item_info
+        self.loss_multiplier = float(loss_multiplier)
         # Keys are (w, h) tuples — except the audio sentinel ("audio", w, h), which a plain
         # sort would crash on (str vs int). Stringify per element; the order is only cosmetic.
         self.bucket_resos = sorted(self.buckets.keys(), key=lambda k: tuple(str(x) for x in k))
@@ -510,6 +512,8 @@ class BucketBatchManager:
         # Per-image identity for the (passive) per-image loss logger. Harmless list of strings that
         # trainers ignore unless logging is enabled.
         stacked["item_keys"] = [item_info.item_key for item_info in bucket[start:end]]
+        # AI-Toolkit parity: per-dataset loss multiplier (DatasetConfig.loss_multiplier)
+        stacked["loss_multiplier"] = float(getattr(self, "loss_multiplier", 1.0))
 
         return stacked
 
@@ -742,6 +746,9 @@ class ImageDataset(torch.utils.data.Dataset):
 
         if self.cache_directory is None:
             self.cache_directory = self.image_directory
+
+        # AI-Toolkit parity: per-dataset loss multiplier
+        self.loss_multiplier = float(kwargs.get("loss_multiplier", 1.0))
 
         self.batch_manager: Optional[BucketBatchManager] = None
         self.num_train_items = 0
@@ -1140,8 +1147,11 @@ class ImageDataset(torch.utils.data.Dataset):
                 f"training them at the cached size. Re-running cache preparation with more "
                 f"free VRAM re-encodes them at full size.")
 
-        self.batch_manager = BucketBatchManager(bucketed, self.batch_size, num_timestep_buckets=num_timestep_buckets)
+        self.batch_manager = BucketBatchManager(bucketed, self.batch_size, num_timestep_buckets=num_timestep_buckets,
+                                              loss_multiplier=self.loss_multiplier)
         self.batch_manager.show_bucket_info()
+        if self.loss_multiplier != 1.0:
+            logger.info(f"[dataset] loss_multiplier={self.loss_multiplier} for {self.image_directory}")
         self.num_train_items = sum(len(b) for b in bucketed.values())
 
     # -- epoch / seed management -------------------------------------------

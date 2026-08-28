@@ -368,6 +368,84 @@ def should_sample_images(args, steps, epoch=None):
 
 
 # ---------------------------------------------------------------------------
+# AI-Toolkit parity helpers (weight_decay handled in get_optimizer; these for timesteps/loss)
+# ---------------------------------------------------------------------------
+
+_TIMESTEP_TYPE_MAP = {
+    "sigmoid": "sigmoid",
+    "linear": "uniform",
+    "uniform": "uniform",
+    "weighted": "sigma",           # toolkit 'weighted' -> fizgig sigma + cosmap weighting
+    "lognorm_blend": "logsnr",
+    "lognorm": "logsnr",
+    "next_sample": "uniform",
+    "one_step": "uniform",
+    "flux_shift": "flux_shift",
+    "flux2_shift": "flux2_shift",
+    "flex_shift": "flux_shift",
+    "shift": "shift",
+    "lumina2_shift": "shift",
+    "qinglong_flux": "qinglong_flux",
+    "sigma": "sigma",
+}
+
+
+def apply_aitk_timestep_aliases(args):
+    """Resolve --timestep_type (toolkit TrainConfig.timestep_type) onto Fizgig's sampling."""
+    tt = getattr(args, "timestep_type", None)
+    if tt is not None:
+        key = str(tt).strip().lower()
+        mapped = _TIMESTEP_TYPE_MAP.get(key)
+        if mapped is None:
+            logger.warning(f"[aitk-parity] unknown --timestep_type {tt!r}, known: {sorted(_TIMESTEP_TYPE_MAP)} — ignoring")
+        else:
+            old = getattr(args, "timestep_sampling", None)
+            args.timestep_sampling = mapped
+            logger.info(f"[aitk-parity] --timestep_type {tt!r} -> --timestep_sampling {mapped!r} (was {old!r})")
+            if key == "weighted" and getattr(args, "weighting_scheme", "none") == "none":
+                args.weighting_scheme = "cosmap"
+                logger.info("[aitk-parity] weighted -> weighting_scheme=cosmap (toolkit default for weighted)")
+
+
+def compute_aitk_loss(pred, target, loss_type: str, huber_delta: float = 1.0, wavelet_weight: float = 0.1):
+    """AI-Toolkit parity loss (toolkit TrainConfig.loss_type).
+
+    Supports mse, mae/l1, huber/smooth_l1, pseudo_huber (charbonnier), wavelet.
+    Returns element-wise loss (no reduction) so caller's weighting/multiplier still applies.
+    """
+    lt = (loss_type or "mse").lower()
+    if lt == "mse":
+        return torch.nn.functional.mse_loss(pred, target, reduction="none")
+    if lt in ("mae", "l1"):
+        return torch.nn.functional.l1_loss(pred, target, reduction="none")
+    if lt in ("huber", "smooth_l1"):
+        return torch.nn.functional.huber_loss(pred, target, reduction="none", delta=float(huber_delta))
+    if lt == "pseudo_huber":  # charbonnier: sqrt((x-y)^2 + c^2) - c
+        c = float(huber_delta)
+        return torch.sqrt((pred - target) ** 2 + c * c) - c
+    if lt == "wavelet":
+        # Base MSE + frequency term: DWT-like split via avg pooling as cheap wavelet approx.
+        # Toolkit's wavelet is full DWT; this is parity-lite without extra deps.
+        base = torch.nn.functional.mse_loss(pred, target, reduction="none")
+        # Frequency term: high-frequency residual (pred-target minus blurred residual)
+        try:
+            diff = pred - target
+            # Pool to half-res then upsample as low-freq approx
+            if diff.dim() >= 4:
+                low = torch.nn.functional.avg_pool2d(diff, 2, stride=2)
+                low = torch.nn.functional.interpolate(low, size=diff.shape[-2:], mode="bilinear", align_corners=False)
+            else:
+                low = diff.mean(dim=-1, keepdim=True).expand_as(diff)
+            hf = diff - low
+            freq = hf ** 2  # elementwise
+            return base + float(wavelet_weight) * freq
+        except Exception:
+            return base
+    logger.warning(f"[aitk-parity] unknown --loss_type {loss_type!r}, falling back to mse")
+    return torch.nn.functional.mse_loss(pred, target, reduction="none")
+
+
+# ---------------------------------------------------------------------------
 # KleinTrainer
 # ---------------------------------------------------------------------------
 
@@ -564,6 +642,12 @@ class KleinTrainer:
                 except (ValueError, SyntaxError):
                     pass
                 optimizer_kwargs[key] = value
+
+        # AI-Toolkit parity: dedicated --weight_decay (toolkit TrainConfig.optimizer_params
+        # weight_decay). Merged here so both --weight_decay and --optimizer_args work.
+        wd = getattr(args, "weight_decay", None)
+        if wd is not None:
+            optimizer_kwargs.setdefault("weight_decay", float(wd))
 
         lr = args.learning_rate
         optimizer = None
@@ -933,6 +1017,11 @@ class KleinTrainer:
                 else:
                     t = torch.stack(available_t, dim=0)
 
+            # AI-Toolkit parity: timestep_bias additive offset in 0-1 space
+            _bias = getattr(args, "timestep_bias", None)
+            if _bias is not None and float(_bias) != 0.0:
+                t = torch.clamp(t + float(_bias), 0.02, 0.98)
+
             timesteps = t * 1000.0
             # Klein latents are 4D: (B, C, H, W) — no video frame dimension
             t = t.view(-1, 1, 1, 1)
@@ -949,6 +1038,10 @@ class KleinTrainer:
                 logit_std=args.logit_std,
                 mode_scale=args.mode_scale,
             )
+            # AI-Toolkit parity: timestep_bias for sigma path
+            _bias2 = getattr(args, "timestep_bias", None)
+            if _bias2 is not None and float(_bias2) != 0.0:
+                u = torch.clamp(u + float(_bias2), 0.02, 0.98)
             t_min = args.min_timestep if args.min_timestep is not None else 0
             t_max = args.max_timestep if args.max_timestep is not None else 1000
             # min/max are timestep VALUES (0-1000), same as every other sampling mode.
@@ -1873,6 +1966,9 @@ class KleinTrainer:
         # Model-specific setup
         self.handle_model_specific_args(args)
 
+        # AI-Toolkit parity: resolve --timestep_type alias and log
+        apply_aitk_timestep_aliases(args)
+
         # Show timesteps mode (debug)
         if args.show_timesteps:
             self._show_timesteps(args)
@@ -2582,10 +2678,21 @@ class KleinTrainer:
                         args, accelerator, transformer, latents, batch, noise, noisy_model_input, timesteps, network_dtype
                     )
 
-                    # MSE loss
-                    loss = torch.nn.functional.mse_loss(model_pred.to(network_dtype), target, reduction="none")
+                    # Loss (AI-Toolkit parity: --loss_type)
+                    _lt = getattr(args, "loss_type", "mse")
+                    _hd = getattr(args, "huber_delta", 1.0)
+                    _ww = getattr(args, "wavelet_weight", 0.1)
+                    loss = compute_aitk_loss(model_pred.to(network_dtype), target,
+                                             _lt, huber_delta=_hd, wavelet_weight=_ww)
                     if weighting is not None:
                         loss = loss * weighting
+                    # AI-Toolkit parity: --loss_multiplier (global) and per-dataset multiplier
+                    _lm = getattr(args, "loss_multiplier", None)
+                    if _lm is not None and float(_lm) != 1.0:
+                        loss = loss * float(_lm)
+                    _dlm = batch.get("loss_multiplier", None) if isinstance(batch, dict) else None
+                    if _dlm is not None and float(_dlm) != 1.0:
+                        loss = loss * float(_dlm)
                     noise_loss = loss.mean()
 
                     loss = noise_loss
@@ -3161,12 +3268,27 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use_pinned_memory_for_block_swap", action="store_true")
     parser.add_argument("--disable_numpy_memmap", action="store_true")
 
+    # ---- Optimizer (AI-Toolkit parity) ----
+    parser.add_argument("--weight_decay", type=float, default=None,
+                        help="AI-Toolkit parity: dedicated weight_decay knob (toolkit optimizer_params "
+                             "weight_decay). Equivalent to --optimizer_args \"weight_decay=X\"; "
+                             "if both are given the free-form string wins.")
+
     # ---- Timestep sampling ----
     parser.add_argument("--guidance_scale", type=float, default=1.0,
                         help="Embedded CFG guidance scale for training")
     parser.add_argument("--timestep_sampling", default="sigma",
                         choices=["sigma", "uniform", "sigmoid", "shift", "flux_shift", "flux2_shift",
                                  "logsnr", "qinglong_flux"])
+    # AI-Toolkit parity aliases
+    parser.add_argument("--timestep_type", type=str, default=None,
+                        help="AI-Toolkit parity alias for --timestep_sampling. Values: sigmoid, "
+                             "linear (->uniform), weighted (->sigma+cosmap), flux_shift, shift, "
+                             "lognorm_blend etc. When given it overrides --timestep_sampling.")
+    parser.add_argument("--timestep_bias", type=float, default=None,
+                        help="AI-Toolkit parity: additive bias to sampled timesteps in 0-1 range. "
+                             "+ve -> more noisy (early) steps, -ve -> more clean (late). Clamped to "
+                             "0.02-0.98 after shift. Mirrors toolkit timestep bias / logit bias.")
     parser.add_argument("--discrete_flow_shift", type=float, default=1.0)
     parser.add_argument("--sigmoid_scale", type=float, default=1.0)
     parser.add_argument("--weighting_scheme", type=str, default="none",
@@ -3179,6 +3301,21 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preserve_distribution_shape", action="store_true")
     parser.add_argument("--num_timestep_buckets", type=int, default=None)
     parser.add_argument("--show_timesteps", type=str, default=None, choices=["image", "console"])
+
+    # ---- Loss (AI-Toolkit parity) ----
+    parser.add_argument("--loss_type", type=str, default="mse",
+                        choices=["mse", "mae", "l1", "huber", "smooth_l1", "pseudo_huber", "wavelet"],
+                        help="AI-Toolkit parity: loss function (toolkit TrainConfig.loss_type). "
+                             "mse=flow-matching default, huber/smooth_l1 robust, pseudo_huber "
+                             "charbonnier, wavelet adds frequency term.")
+    parser.add_argument("--huber_delta", type=float, default=1.0,
+                        help="Delta for huber/smooth_l1/pseudo_huber losses.")
+    parser.add_argument("--loss_multiplier", type=float, default=None,
+                        help="AI-Toolkit parity: global loss multiplier (toolkit DatasetConfig."
+                             "loss_multiplier / TrainConfig reg_weight). Per-dataset multiplier "
+                             "from dataset TOML multiplies on top. 1.0 = unchanged.")
+    parser.add_argument("--wavelet_weight", type=float, default=0.1,
+                        help="Weight for wavelet loss frequency term when --loss_type=wavelet.")
 
     # ---- Network (LoRA) ----
     parser.add_argument("--no_metadata", action="store_true")

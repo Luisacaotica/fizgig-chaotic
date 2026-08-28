@@ -435,7 +435,8 @@ def _get_lin_function(x1, y1, x2, y2):
 _KREA2_MU = _get_lin_function(256, 0.5, 6400, 1.15)
 
 
-def sample_krea2_timesteps(bsize: int, num_img_tokens: int, device, sigmoid_scale: float = 1.0) -> torch.Tensor:
+def sample_krea2_timesteps(bsize: int, num_img_tokens: int, device, sigmoid_scale: float = 1.0,
+                           timestep_bias: float = 0.0) -> torch.Tensor:
     """Krea 2 'krea2_shift' timestep sampling — a faithful port of the musubi krea2_train recipe.
 
     The base t is **logit-normal** (sigmoid of a standard normal), so timesteps concentrate near the
@@ -446,15 +447,22 @@ def sample_krea2_timesteps(bsize: int, num_img_tokens: int, device, sigmoid_scal
 
         t_base = sigmoid(randn * sigmoid_scale)
         t      = (t_base * shift) / (1 + (shift - 1) * t_base)
+
+    AI-Toolkit parity: `timestep_bias` additive offset in 0-1 space (clamped 0.02-0.98).
     """
     mu = _KREA2_MU(num_img_tokens)
     shift = math.exp(mu)
     t = (torch.randn(bsize, device=device) * sigmoid_scale).sigmoid()
-    return (t * shift) / (1.0 + (shift - 1.0) * t)
+    t = (t * shift) / (1.0 + (shift - 1.0) * t)
+    if timestep_bias:
+        t = torch.clamp(t + float(timestep_bias), 0.02, 0.98)
+    return t
 
 
 def compute_loss(dit, latent, hidden_states, attention_mask, *, shift=2.5, dtype=torch.bfloat16,
-                 device=None):
+                 device=None, loss_type: str = "mse", huber_delta: float = 1.0,
+                 wavelet_weight: float = 0.1, loss_multiplier: float = 1.0,
+                 timestep_bias: float = 0.0, sigmoid_scale: float = 1.0):
     """Flow-matching training loss for Krea 2.
 
     latent:        (B, 16, h, w)         — cached Qwen-Image VAE latent
@@ -463,6 +471,8 @@ def compute_loss(dit, latent, hidden_states, attention_mask, *, shift=2.5, dtype
 
     `shift` is kept for signature compatibility but no longer used: krea2_shift derives the flow
     shift from the image resolution (see sample_krea2_timesteps), matching the musubi reference.
+
+    AI-Toolkit parity: loss_type, loss_multiplier, timestep_bias.
     """
     # The caller knows the compute device; only fall back to sniffing a parameter when it
     # doesn't say. Sniffing is fragile — under block swap some parameters are SUPPOSED to be on
@@ -478,7 +488,8 @@ def compute_loss(dit, latent, hidden_states, attention_mask, *, shift=2.5, dtype
     # (latent grid // patch). Replaces the old uniform-u sampler that over-weighted high-noise t
     # and inflated the loss.
     num_img_tokens = (latent.shape[-2] // patch) * (latent.shape[-1] // patch)
-    t = sample_krea2_timesteps(B, num_img_tokens, device)
+    t = sample_krea2_timesteps(B, num_img_tokens, device, sigmoid_scale=sigmoid_scale,
+                               timestep_bias=timestep_bias)
     t_ = t.view(B, 1, 1, 1).to(dtype)
     noised = (1.0 - t_) * latent + t_ * noise
     target = noise - latent  # flow-matching velocity
@@ -489,9 +500,38 @@ def compute_loss(dit, latent, hidden_states, attention_mask, *, shift=2.5, dtype
 
     with torch.autocast(device_type=torch.device(device).type, dtype=dtype):
         pred = dit(img=img_tokens, context=txt, t=t.to(dtype), pos=pos, mask=mask)
+    # AI-Toolkit parity loss
+    lt = (loss_type or "mse").lower()
+    if lt == "mse":
+        loss = F.mse_loss(pred.float(), target_tokens.float())
+    elif lt in ("mae", "l1"):
+        loss = F.l1_loss(pred.float(), target_tokens.float())
+    elif lt in ("huber", "smooth_l1"):
+        loss = F.huber_loss(pred.float(), target_tokens.float(), delta=float(huber_delta))
+    elif lt == "pseudo_huber":
+        c = float(huber_delta)
+        diff = pred.float() - target_tokens.float()
+        loss = (torch.sqrt(diff * diff + c * c) - c).mean()
+    elif lt == "wavelet":
+        base = F.mse_loss(pred.float(), target_tokens.float())
+        try:
+            diff = pred.float() - target_tokens.float()
+            if diff.dim() >= 4:
+                low = torch.nn.functional.avg_pool2d(diff, 2, stride=2)
+                low = torch.nn.functional.interpolate(low, size=diff.shape[-2:], mode="bilinear", align_corners=False)
+            else:
+                low = diff.mean(dim=-1, keepdim=True).expand_as(diff)
+            hf = diff - low
+            loss = base + float(wavelet_weight) * (hf ** 2).mean()
+        except Exception:
+            loss = base
+    else:
+        loss = F.mse_loss(pred.float(), target_tokens.float())
+    if float(loss_multiplier) != 1.0:
+        loss = loss * float(loss_multiplier)
     # Return the mean drawn timestep alongside the loss so the passive per-image loss logger can
     # normalize for noise level (the caller ignores it when logging is off).
-    return F.mse_loss(pred.float(), target_tokens.float()), float(t.mean().item())
+    return loss, float(t.mean().item())
 
 
 
@@ -1427,6 +1467,15 @@ def train_krea2(
     adaptive_lr: bool = False,
     adaptive_lr_min: float = 1e-5,
     adaptive_lr_max: float = 4e-4,
+    # AI-Toolkit parity
+    weight_decay: float = None,
+    loss_type: str = "mse",
+    huber_delta: float = 1.0,
+    wavelet_weight: float = 0.1,
+    loss_multiplier: float = 1.0,
+    timestep_type: str = None,
+    timestep_bias: float = 0.0,
+    sigmoid_scale: float = 1.0,
     # Output metadata (Other Options → Metadata in the GUI) — recorded in the saved LoRA.
     metadata_title: str = None,
     metadata_author: str = None,
@@ -1443,6 +1492,17 @@ def train_krea2(
     GUI wiring are layered on elsewhere."""
     validate_output_name(output_name)     # before the model loads, not an epoch later (#70)
     torch.manual_seed(seed)
+    # AI-Toolkit parity logging
+    if weight_decay is not None:
+        logger.info(f"[aitk-parity] --weight_decay {weight_decay}")
+    if timestep_type is not None:
+        logger.info(f"[aitk-parity] krea2 --timestep_type {timestep_type!r} (krea2 uses fixed krea2_shift; bias via --timestep_bias)")
+    if timestep_bias:
+        logger.info(f"[aitk-parity] krea2 --timestep_bias {timestep_bias}")
+    if loss_type != "mse":
+        logger.info(f"[aitk-parity] krea2 --loss_type {loss_type} huber_delta={huber_delta} wavelet_weight={wavelet_weight}")
+    if loss_multiplier != 1.0:
+        logger.info(f"[aitk-parity] krea2 global --loss_multiplier {loss_multiplier}")
 
     # Updated at every sample render (see the sample_previews*/prompts= call sites below) so
     # _sai_metadata can default the description to whatever prompt made the newest thumbnail,
@@ -1588,7 +1648,7 @@ def train_krea2(
     params = list(network.get_trainable_params())
     from fizgig.training.optimizers import create_optimizer
     optimizer, optimizer_label = create_optimizer(
-        optimizer_type, params, learning_rate, optimizer_args)
+        optimizer_type, params, learning_rate, optimizer_args, weight_decay=weight_decay)
 
     collator = _Krea2Collator(shared_epoch, group)
     # Bucket-grouped ordering (OFF by default — measured, and it buys nothing today).
@@ -1960,9 +2020,18 @@ def train_krea2(
                 global_step += 1
                 progress_bar.update(1)
                 continue
+            # AI-Toolkit parity: per-dataset + global loss multiplier merge
+            _ds_mult = float(batch.get("loss_multiplier", 1.0)) if isinstance(batch, dict) else 1.0
+            _glob_mult = float(loss_multiplier) if loss_multiplier is not None else 1.0
+            _eff_mult = _ds_mult * _glob_mult
             loss, t_used = compute_loss(dit, batch["latents"], batch["hidden_states"], batch["attention_mask"],
                                         device=device,
-                                        shift=shift, dtype=dtype)
+                                        shift=shift, dtype=dtype,
+                                        loss_type=loss_type, huber_delta=huber_delta,
+                                        wavelet_weight=wavelet_weight,
+                                        loss_multiplier=_eff_mult,
+                                        timestep_bias=float(timestep_bias or 0.0),
+                                        sigmoid_scale=float(sigmoid_scale or 1.0))
             # Per-image LR: scale THIS step's gradient by the image's multiplier (throttle stuck
             # images, boost healthy learned ones). Raw loss is still what gets recorded/averaged below,
             # so avr_loss and the global adaptive-LR watcher see unscaled numbers.

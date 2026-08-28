@@ -832,7 +832,9 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
                  sigma: torch.Tensor = None, shift: float = None, generator=None,
                  noise: torch.Tensor = None, audio_latent: torch.Tensor = None,
                  audio_weight: float = 1.0, video_weight: float = 1.0,
-                 parts_out: dict = None):
+                 parts_out: dict = None,
+                 loss_type: str = "mse", huber_delta: float = 1.0,
+                 wavelet_weight: float = 0.1, timestep_bias: float = 0.0):
     """One training step's loss.
 
     latent      : [1, 24, T, H, W] clean VAE latent (x0). T=1 is a still.
@@ -877,14 +879,44 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
         # Resolution-aware auto schedule: token count from the (cropped) latent's patch grid.
         _tokens = (x0.shape[-2] // _ph) * (x0.shape[-1] // _pw)
         sigma = sample_sigmas(1, device, shift=shift, generator=generator, image_tokens=_tokens)
+        if timestep_bias:
+            sigma = torch.clamp(sigma + float(timestep_bias), 0.02, 0.98)
+    elif timestep_bias:
+        sigma = torch.clamp(sigma + float(timestep_bias), 0.02, 0.98)
     s = sigma.reshape(1, 1, 1, 1, 1).to(torch.float32)
 
     noised = (1.0 - s) * x0 + s * noise
     t = (1.0 - sigma).to(device)
 
+    def _loss_fn(a, b):
+        lt = (loss_type or "mse").lower()
+        if lt == "mse":
+            return F.mse_loss(a, b)
+        if lt in ("mae", "l1"):
+            return F.l1_loss(a, b)
+        if lt in ("huber", "smooth_l1"):
+            return F.huber_loss(a, b, delta=float(huber_delta))
+        if lt == "pseudo_huber":
+            c = float(huber_delta)
+            return (torch.sqrt((a - b) ** 2 + c * c) - c).mean()
+        if lt == "wavelet":
+            base = F.mse_loss(a, b)
+            try:
+                diff = a - b
+                if diff.dim() >= 4:
+                    low = torch.nn.functional.avg_pool2d(diff, 2, stride=2)
+                    low = torch.nn.functional.interpolate(low, size=diff.shape[-2:], mode="bilinear", align_corners=False)
+                else:
+                    low = diff.mean(dim=-1, keepdim=True).expand_as(diff)
+                hf = diff - low
+                return base + float(wavelet_weight) * (hf ** 2).mean()
+            except Exception:
+                return base
+        return F.mse_loss(a, b)
+
     if audio_latent is None:
         pred = model(noised.to(latent.dtype), t, text_embeds)
-        loss = F.mse_loss(pred.float(), (x0 - noise).to(pred.dtype).float())
+        loss = _loss_fn(pred.float(), (x0 - noise).to(pred.dtype).float())
         if parts_out is not None:
             parts_out.update(video=float(loss.detach()), audio=None)
         if video_weight != 1.0:              # degenerate (an audio item missing its rows) but honest
@@ -905,12 +937,12 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
 
     pred, pred_a = model(noised.to(latent.dtype), t, text_embeds,
                          audio_rows=a_noised, return_audio=True)
-    v_loss = F.mse_loss(pred.float(), (x0 - noise).to(pred.dtype).float())
+    v_loss = _loss_fn(pred.float(), (x0 - noise).to(pred.dtype).float())
     if pred_a is None:                      # pack_audio_rows off — nothing to train against
         if parts_out is not None:
             parts_out.update(video=float(v_loss.detach()), audio=None)
         return video_weight * v_loss, sigma_v
-    a_loss = F.mse_loss(pred_a.float(), (a0 - a_noise).float())
+    a_loss = _loss_fn(pred_a.float(), (a0 - a_noise).float())
     if parts_out is not None:
         parts_out.update(video=float(v_loss.detach()), audio=float(a_loss.detach()),
                          sigma_audio=sigma_a)
@@ -2158,6 +2190,14 @@ def train_minimax(
     adaptive_lr: bool = False,
     adaptive_lr_min: float = 1e-5,
     adaptive_lr_max: float = 4e-4,
+    # AI-Toolkit parity
+    weight_decay: float = None,
+    loss_type: str = "mse",
+    huber_delta: float = 1.0,
+    wavelet_weight: float = 0.1,
+    loss_multiplier: float = 1.0,
+    timestep_type: str = None,
+    timestep_bias: float = 0.0,
     # In-training previews. Prompts come from the Samples tab; the text encoder is loaded ONCE
     # before the DiT (it must never be resident alongside it) and freed.
     sample_prompts: list = None,
@@ -2706,9 +2746,28 @@ def train_minimax(
 
     # Weight-decay parity with the reference trainer: ai-toolkit's job template passes
     # optimizer_params weight_decay=1e-4; bitsandbytes' default is 0.01 (100x). Only applied
-    # when the user hasn't set their own via Optimizer Args.
-    if "weight_decay" not in (optimizer_args or "") and "adam" in optimizer_type.lower():
+    # when the user hasn't set their own via Optimizer Args or dedicated --weight_decay.
+    if weight_decay is not None and "weight_decay" not in (optimizer_args or ""):
+        optimizer_args = (optimizer_args + f" weight_decay={float(weight_decay)}").strip()
+        logger.info(f"[aitk-parity] dedicated --weight_decay {weight_decay} merged into optimizer_args")
+    elif "weight_decay" not in (optimizer_args or "") and "adam" in optimizer_type.lower():
         optimizer_args = (optimizer_args + " weight_decay=1e-4").strip()
+
+    # AI-Toolkit parity logging for timesteps/loss
+    if timestep_type is not None:
+        logger.info(f"[aitk-parity] minimax --timestep_type {timestep_type!r} (mapped to shift/bias)")
+        # Map toolkit timestep_type onto minimax shift
+        _tt = str(timestep_type).lower()
+        if _tt in ("sigmoid",):  # logit-normal unshifted
+            shift = "sigmoid"
+        elif _tt in ("linear", "uniform"):
+            shift = 1.0
+        elif _tt == "weighted":
+            shift = 3.5  # mid bias
+    if timestep_bias:
+        logger.info(f"[aitk-parity] minimax --timestep_bias {timestep_bias}")
+    if loss_type != "mse":
+        logger.info(f"[aitk-parity] minimax --loss_type {loss_type}")
 
     # Depth-dependent LR. A perturbation injected at block 5 passes through 45 more blocks that
     # absorb and renormalize it; one injected at block 45 lands almost directly on the output. So
@@ -3720,10 +3779,19 @@ def train_minimax(
                 _a = batch.get("audio_latent")
                 if _a is not None:
                     _a = _a[0].to(device)            # (1, A*2, 32) -> the DiT's row block
+                # AI-Toolkit parity: per-dataset loss multiplier + global multiplier + loss_type/bias
+                _ds_mult = float(batch.get("loss_multiplier", 1.0)) if isinstance(batch, dict) else 1.0
+                _glob_mult = float(loss_multiplier) if loss_multiplier is not None else 1.0
+                _eff_mult = _ds_mult * _glob_mult
                 loss, _step_sigma = compute_loss(dit, latents, text, shift=shift,
                                                  audio_latent=_a, audio_weight=audio_weight,
                                                  video_weight=0.0 if _is_voice else 1.0,
-                                                 parts_out=_audio_parts)
+                                                 parts_out=_audio_parts,
+                                                 loss_type=loss_type, huber_delta=huber_delta,
+                                                 wavelet_weight=wavelet_weight,
+                                                 timestep_bias=float(timestep_bias or 0.0))
+                if _eff_mult != 1.0:
+                    loss = loss * _eff_mult
                 if _is_voice:
                     # Its own ledger. The clip ledger's "video err" is a real number about real
                     # footage; a voice item's video term is its error against the placeholder —

@@ -173,6 +173,10 @@ def apply_chaotic_patches(GUIClass):
             _patch_slider_validation(self)
         except Exception as e:
             print(f"[chaotic] slider validation patch failed: {e}")
+        try:
+            _patch_minimax_blocks_help(self)
+        except Exception as e:
+            print(f"[chaotic] blocks help patch failed: {e}")
         # Grouped tabs: Data / Train / Misc / Options with subtabs (user request)
         # Default OFF (flat) until Canvas-window reparent is stable — set CHAOTIC_GROUPED=1 to try.
         try:
@@ -1541,6 +1545,88 @@ def _patch_slider_validation(self):
         print("[chaotic] slider validation patched (no data needed when Slider ON)")
     except Exception as e:
         print(f"[chaotic] slider patch failed: {e}")
+
+def _patch_minimax_blocks_help(self):
+    # Add detailed H3 Blocks to Train guide below the existing hint.
+    # H3 has 50 DiT blocks (0-49) with NO published map — ranges are hypotheses scaled from Klein's
+    # measured map (composition early 30%, identity 30-75%, detail 60-100%) and Fizgig's own H3 measurements:
+    # 20-49 likeness (photos 20-49, clips all when Optimised Likeness ON), 0-3,6-47 style, 38-48 voice core.
+    try:
+        import lora_trainer_gui as gui_mod
+        COLORS = gui_mod.COLORS
+        FONT_FAMILY = gui_mod.FONT_FAMILY
+    except:
+        COLORS = {"bg_deep":"#0A0A0A","bg_surface":"#1A1A1A","text_primary":"#FFF2E6","text_muted":"#8A6B4A","text_explain":"#C3CDD9","border":"#3A2410"}
+        FONT_FAMILY = "Segoe UI"
+    # Find scheduler_content via Blocks hint label
+    hint = getattr(self, '_minimax_blocks_hint', None)
+    if hint is None:
+        # try to locate via search
+        try:
+            for w in self.master.winfo_children():
+                # recursive search not needed, just use known attr
+                pass
+        except: pass
+        print("[chaotic][blocks] hint not found, skip")
+        return
+    parent = hint.master
+    # Don't add twice
+    if hasattr(self, '_chaotic_blocks_help_added') and self._chaotic_blocks_help_added:
+        return
+    try:
+        # Container frame below hint
+        box = tk.Frame(parent, bg=COLORS["bg_surface"], highlightbackground=COLORS["border"], highlightthickness=1)
+        # hint is at row 32, so put box at row 33 spanning 2 cols
+        box.grid(row=33, column=0, columnspan=3, sticky=tk.EW, padx=5, pady=(4,8))
+        box.columnconfigure(0, weight=1)
+        # Title
+        tk.Label(box, text="Chaotic — H3 Concepts → Blocks (experimental, not a published map)", font=(FONT_FAMILY, 9, "bold"), fg="#FF6B00", bg=COLORS["bg_surface"]).pack(anchor=tk.W, padx=8, pady=(6,2))
+        tk.Label(box, text="H3 is 50 identical blocks (0-49). No published role map — below is Fizgig's measured recipe (lora_trainer_gui.py:620-626, 6801) + Klein analogy, not a guarantee. Train a range and compare — if it works, its complement wasn't needed.", font=(FONT_FAMILY, 8), fg=COLORS["text_muted"], bg=COLORS["bg_surface"], wraplength=700, justify=tk.LEFT).pack(anchor=tk.W, padx=8, pady=(0,6))
+        # Table as monospace text for copy-paste
+        txt = tk.Text(box, height=14, wrap=tk.WORD, bg=COLORS["bg_surface"], fg=COLORS["text_explain"], font=("Consolas", 8), relief=tk.FLAT, highlightthickness=0, bd=0, padx=6, pady=4)
+        txt.pack(fill=tk.X, padx=6, pady=(0,4))
+        guide = (
+            "Concept → Blocks to type in 'Blocks to Train' (comma ranges, e.g. 20-49, 38-48):\n"
+            "• Dance / motion (video): all (50) or 10-49 · clips train all when Likeness ON; motion is middle band 14-37 per MINIMAX_BLOCK_OPTIONS. Start with all, then try 10-49 to keep first 10 (composition) frozen.\n"
+            "• Camera view / movement / framing: 0-24 front half (composition) — early blocks per Klein 30% analogy. Try 0-24 alone vs all to see if framing needs front.\n"
+            "• Animation style — claymation / stop-motion (surface + temporal): 0-3, 6-47 (Style preset) — style lives in 0-3 + 6-47 per Fizgig measurement; clay is a surface style, so use Style preset. For pure temporal choppiness, add middle 14-37.\n"
+            "• Misc fix — prompting correcting / adherence: all or 20-49 — if prompt ignores, identity blocks 27-49 + 20-26 stability band. Try all first, then 20-49.\n"
+            "• Anatomy fix: avoid front trunk 0-19 where photo gradients deform anatomy (lora_trainer_gui.py:624). Train 20-49 for anatomy fix; if still deformed, try 27-49 (identity lives there).\n"
+            "• Audio / voice: 38-48 voice core (per README \"voice core 38-48\") or 20-49 with audio clips — audio is 68% of loss in your log, so voice needs late blocks. For voice-only LoRA, try 38-48 or 20-49.\n"
+            "• General style (2D, painterly): 0-3, 6-47 — as per Style preset (Fizgig README: 0-3, 6-47).\n"
+            "• Likeness (face/character): 20-49 (Optimised Likeness ON does this for photos automatically) — 20-26 adds pose stability, 27-49 identity.\n"
+            "Tips: Keep Optimised Likeness Learning ON for character+video mixes (photos 20-49, clips all). Untick to hand-pick. ||dW|| is flat (3x), so weight movement gives no map — only train-and-compare works. Type any spec the trainer parser accepts (\"3-12, 22, 31-33\")."
+        )
+        txt.insert("1.0", guide)
+        txt.configure(state="disabled")
+        # Make selectable but not editable
+        def _allow_select(e): return "break"
+        # keep disabled but allow copy via Ctrl-C: use state normal then bind
+        txt.configure(state="normal")
+        txt.bind("<Key>", lambda e: "break" if e.keysym not in ("c", "C") or not (e.state & 4) else None)
+        # keep as normal with readonly behavior
+        self._chaotic_blocks_help_added = True
+        self._chaotic_blocks_help_box = box
+        # Show/hide with architecture
+        def _update_vis(*_a):
+            try:
+                is_mm = False
+                if hasattr(self, '_is_minimax_arch'):
+                    is_mm = self._is_minimax_arch()
+                elif hasattr(self, 'architecture_var'):
+                    is_mm = "H3" in str(self.architecture_var.get()) or "MiniMax" in str(self.architecture_var.get())
+                if is_mm: box.grid()
+                else: box.grid_remove()
+            except: pass
+        try:
+            if hasattr(self, 'architecture_var'):
+                self.architecture_var.trace_add("write", lambda *_: _update_vis())
+        except: pass
+        _update_vis()
+        print("[chaotic][blocks] H3 concepts guide injected below Blocks to Train")
+    except Exception as e:
+        print(f"[chaotic][blocks] inject failed: {e}")
+        import traceback; traceback.print_exc()
 
 def _patch_sample_default(self):
     # Chaotic default: Enable Sample Generation unchecked by default (user request)

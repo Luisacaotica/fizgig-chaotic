@@ -100,7 +100,8 @@ def _warn_lr(name: str, lr: float) -> None:
 
 
 def create_optimizer(name: str, params, lr: float, args_str: str = "",
-                     eps_floor_8bit: bool = False) -> tuple:
+                     eps_floor_8bit: bool = False,
+                     weight_decay: float | None = None) -> tuple:
     """Build an optimizer. Returns `(optimizer, label)`; the label goes into LoRA metadata.
 
     Falls back to plain AdamW if the requested one cannot be constructed — a training run should
@@ -109,9 +110,16 @@ def create_optimizer(name: str, params, lr: float, args_str: str = "",
 
     `eps_floor_8bit` raises the 8-bit Adam family's eps to 1e-6. OFF by default: it is a
     MiniMax H3 workaround and every other family keeps the library default. See the note below.
+
+    `weight_decay` is the AI-Toolkit parity dedicated knob (toolkit TrainConfig optimizer_params
+    weight_decay). When given it is merged as `weight_decay=...` unless the free-form args_str
+    already contains an explicit weight_decay — so `--weight_decay 0.01` and
+    `--optimizer_args "weight_decay=0.01"` are equivalent and composable.
     """
     name = (name or DEFAULT_OPTIMIZER).strip()
     kwargs = parse_optimizer_args(args_str)
+    if weight_decay is not None:
+        kwargs.setdefault("weight_decay", float(weight_decay))
     key = name.lower()
     _warn_lr(key, lr)
 

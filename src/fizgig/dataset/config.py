@@ -61,6 +61,8 @@ class BaseDatasetParams:
     cache_directory: Optional[str] = None
     debug_dataset: bool = False
     architecture: str = "no_default"
+    # AI-Toolkit parity: DatasetConfig.loss_multiplier (per-dataset)
+    loss_multiplier: float = 1.0
 
 
 @dataclass
@@ -120,6 +122,7 @@ class ConfigSanitizer:
         ),
         "enable_bucket": bool,
         "bucket_no_upscale": bool,
+        "loss_multiplier": float,
     }
 
     # Fields specific to an image dataset entry

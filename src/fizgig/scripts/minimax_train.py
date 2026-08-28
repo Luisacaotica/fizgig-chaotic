@@ -69,6 +69,18 @@ def setup_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--optimizer_type", default="adamw8bit", choices=available_optimizers())
     p.add_argument("--optimizer_args", default="", help='Free-form kwargs, e.g. "weight_decay=0.01"')
+    # AI-Toolkit parity
+    p.add_argument("--weight_decay", type=float, default=None,
+                   help="Dedicated weight_decay (toolkit optimizer_params weight_decay).")
+    p.add_argument("--loss_type", default="mse",
+                   choices=["mse", "mae", "l1", "huber", "smooth_l1", "pseudo_huber", "wavelet"])
+    p.add_argument("--huber_delta", type=float, default=1.0)
+    p.add_argument("--wavelet_weight", type=float, default=0.1)
+    p.add_argument("--loss_multiplier", type=float, default=1.0,
+                   help="Global loss multiplier (per-dataset from TOML multiplies on top)")
+    p.add_argument("--timestep_type", default=None)
+    p.add_argument("--timestep_bias", type=float, default=0.0)
+    p.add_argument("--sigmoid_scale", type=float, default=1.0)
     p.add_argument("--caption_dropout", type=float, default=0.05,
                    help="Fraction of steps trained on the empty prompt (reference default 0.05; "
                         "needs the uncond embed cached by minimax_cache_text). 0 disables.")
@@ -293,6 +305,10 @@ def main():
         adaptive_lr=args.adaptive_lr,
         adaptive_lr_min=args.adaptive_lr_min,
         adaptive_lr_max=args.adaptive_lr_max,
+        weight_decay=args.weight_decay,
+        loss_type=args.loss_type, huber_delta=args.huber_delta,
+        wavelet_weight=args.wavelet_weight, loss_multiplier=args.loss_multiplier,
+        timestep_type=args.timestep_type, timestep_bias=args.timestep_bias,
         metadata_title=args.metadata_title,
         metadata_author=args.metadata_author,
         metadata_description=args.metadata_description,

@@ -1722,6 +1722,12 @@ class LoRATrainerGUI:
             "RESUME_TRAINING": "",
             "OPTIMIZER_TYPE": "adamw8bit",
             "OPTIMIZER_ARGS": "",
+            "WEIGHT_DECAY": "",  # AI-Toolkit parity: dedicated weight_decay (maps to --weight_decay)
+            "LOSS_TYPE": "mse",  # AI-Toolkit parity: loss_type
+            "LOSS_MULTIPLIER": "",  # AI-Toolkit parity: global loss multiplier (per-dataset in TOML)
+            "HUBER_DELTA": "1.0",
+            "TIMESTEP_TYPE": "",  # AI-Toolkit parity: alias for timestep_sampling
+            "TIMESTEP_BIAS": "",  # AI-Toolkit parity: additive bias to sampled timesteps
             "GRADIENT_ACCUMULATION": 1,  # Effective batch size = batch × this
             "MAX_GRAD_NORM": 1.0,  # Gradient clipping (0 to disable)
             "NETWORK_DROPOUT": 0,  # LoRA dropout for regularization
@@ -23955,6 +23961,14 @@ class LoRATrainerGUI:
             toml_lines.append(f"num_repeats = {num_repeats}")
             toml_lines.append(f"enable_bucket = {'true' if self.dataset_enable_bucket_var.get() else 'false'}")
             toml_lines.append(f"bucket_no_upscale = {'true' if self.dataset_no_upscale_var.get() else 'false'}")
+            # AI-Toolkit parity: per-dataset loss multiplier in [general] (propagates to all datasets via fallback)
+            _lm_toml = str(self.settings.get("LOSS_MULTIPLIER", "") or "").strip()
+            if _lm_toml:
+                try:
+                    if float(_lm_toml) != 1.0:
+                        toml_lines.append(f"loss_multiplier = {float(_lm_toml)}")
+                except ValueError:
+                    pass
             toml_lines.append("")
             toml_lines.append("[[datasets]]")
 
@@ -25168,6 +25182,37 @@ class LoRATrainerGUI:
             # one argument.
             command.extend(["--optimizer_args"] + self.settings["OPTIMIZER_ARGS"].split())
 
+        # AI-Toolkit parity: dedicated weight_decay knob
+        wd = str(self.settings.get("WEIGHT_DECAY", "") or "").strip()
+        if wd:
+            try:
+                float(wd)
+                command.extend(["--weight_decay", str(wd)])
+            except ValueError:
+                pass
+
+        # AI-Toolkit parity: loss_type / loss_multiplier / timestep_type / bias
+        lt = str(self.settings.get("LOSS_TYPE", "mse") or "mse").strip()
+        if lt and lt.lower() != "mse":
+            command.extend(["--loss_type", lt.lower()])
+        lm = str(self.settings.get("LOSS_MULTIPLIER", "") or "").strip()
+        if lm:
+            try:
+                if float(lm) != 1.0:
+                    command.extend(["--loss_multiplier", str(lm)])
+            except ValueError:
+                pass
+        tt = str(self.settings.get("TIMESTEP_TYPE", "") or "").strip()
+        if tt:
+            command.extend(["--timestep_type", tt])
+        tb = str(self.settings.get("TIMESTEP_BIAS", "") or "").strip()
+        if tb:
+            try:
+                if float(tb) != 0.0:
+                    command.extend(["--timestep_bias", str(tb)])
+            except ValueError:
+                pass
+
         # Gradient accumulation (effective batch = batch × this)
         gradient_accum = self.settings.get("GRADIENT_ACCUMULATION", 1)
         if isinstance(gradient_accum, str):
@@ -25583,6 +25628,34 @@ class LoRATrainerGUI:
         _opt_args = str(self.settings.get("OPTIMIZER_ARGS", "") or "").strip()
         if _opt_args:
             cmd += ["--optimizer_args", _opt_args]
+        # AI-Toolkit parity: dedicated knobs (weight_decay, loss, timestep bias)
+        _wd = str(self.settings.get("WEIGHT_DECAY", "") or "").strip()
+        if _wd:
+            try:
+                float(_wd)
+                cmd += ["--weight_decay", str(_wd)]
+            except ValueError:
+                pass
+        _lt = str(self.settings.get("LOSS_TYPE", "mse") or "mse").strip()
+        if _lt and _lt.lower() != "mse":
+            cmd += ["--loss_type", _lt.lower()]
+        _lm = str(self.settings.get("LOSS_MULTIPLIER", "") or "").strip()
+        if _lm:
+            try:
+                if float(_lm) != 1.0:
+                    cmd += ["--loss_multiplier", str(_lm)]
+            except ValueError:
+                pass
+        _tt = str(self.settings.get("TIMESTEP_TYPE", "") or "").strip()
+        if _tt:
+            cmd += ["--timestep_type", _tt]
+        _tb = str(self.settings.get("TIMESTEP_BIAS", "") or "").strip()
+        if _tb:
+            try:
+                if float(_tb) != 0.0:
+                    cmd += ["--timestep_bias", str(_tb)]
+            except ValueError:
+                pass
         _cb = str(self.settings.get("COMPILE_BLOCKS", "auto") or "auto").lower()
         # "outside" is a hand-set power value (settings JSON only — the dropdown offers
         # Auto/On/Off): the high-res compile boundary (#99). Passing it through beats
@@ -26050,6 +26123,33 @@ class LoRATrainerGUI:
         _opt_args = str(self.settings.get("OPTIMIZER_ARGS", "") or "").strip()
         if _opt_args:
             cmd += ["--optimizer_args", _opt_args]
+        _wd = str(self.settings.get("WEIGHT_DECAY", "") or "").strip()
+        if _wd:
+            try:
+                float(_wd)
+                cmd += ["--weight_decay", str(_wd)]
+            except ValueError:
+                pass
+        _lt = str(self.settings.get("LOSS_TYPE", "mse") or "mse").strip()
+        if _lt and _lt.lower() != "mse":
+            cmd += ["--loss_type", _lt.lower()]
+        _lm = str(self.settings.get("LOSS_MULTIPLIER", "") or "").strip()
+        if _lm:
+            try:
+                if float(_lm) != 1.0:
+                    cmd += ["--loss_multiplier", str(_lm)]
+            except ValueError:
+                pass
+        _tt = str(self.settings.get("TIMESTEP_TYPE", "") or "").strip()
+        if _tt:
+            cmd += ["--timestep_type", _tt]
+        _tb = str(self.settings.get("TIMESTEP_BIAS", "") or "").strip()
+        if _tb:
+            try:
+                if float(_tb) != 0.0:
+                    cmd += ["--timestep_bias", str(_tb)]
+            except ValueError:
+                pass
         # Output metadata (Other Options → Metadata) — recorded in the saved LoRA.
         for _mkey, _mflag in (("METADATA_TITLE", "--metadata_title"),
                               ("METADATA_AUTHOR", "--metadata_author"),
